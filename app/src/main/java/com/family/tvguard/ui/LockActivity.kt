@@ -17,7 +17,6 @@ import com.family.tvguard.TvGuardApp
 import com.family.tvguard.data.GuardPrefs
 import com.family.tvguard.data.QuizQuestion
 import com.family.tvguard.service.GuardService
-import com.family.tvguard.util.IpUtils
 
 /**
  * Fullscreen lock. M2 quiz is D-pad friendly: arrows move focus, OK/Enter selects.
@@ -73,13 +72,6 @@ class LockActivity : AppCompatActivity() {
         )
         setContentView(R.layout.activity_lock)
         enterImmersive()
-
-        val ip = IpUtils.localIpv4() ?: "192.168.x.x"
-        findViewById<TextView>(R.id.adminUrl).text =
-            "手机打开 http://$ip:${GuardPrefs.HTTP_PORT}/admin/"
-
-        findViewById<TextView>(R.id.tokenHint).text =
-            "遥控器：黄框=当前选项，确认键作答 · PIN 家长绕过"
 
         val btnPin = findViewById<Button>(R.id.btnPin)
         btnPin.setOnClickListener {
@@ -153,6 +145,7 @@ class LockActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (!::prefs.isInitialized) return
         if (hasFocus) {
             enterImmersive()
             if (prefs.quizPending) focusChoice(focusedChoice)
@@ -236,17 +229,27 @@ class LockActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Quota lock (GuardService calls lockNow when remaining quota is 0 and quiz is not pending).
+     * Answering a quiz cannot unlock this state — copy must not say otherwise.
+     */
+    private fun isQuotaExhaustedLock(): Boolean =
+        !prefs.quizPending && prefs.remainingQuotaMs() <= 0L
+
     private fun updateUi(requestQuizFocus: Boolean) {
         val quizMode = prefs.quizPending
+        val quotaLock = isQuotaExhaustedLock()
         val title = findViewById<TextView>(R.id.title)
         val subtitle = findViewById<TextView>(R.id.subtitle)
         val quizPanel = findViewById<LinearLayout>(R.id.quizPanel)
         val pinRow = findViewById<LinearLayout>(R.id.pinRow)
         val pinInput = findViewById<EditText>(R.id.pinInput)
+        val tokenHint = findViewById<TextView>(R.id.tokenHint)
 
         if (quizMode) {
             title.text = "答题解锁"
             subtitle.text = "黄框高亮当前选项；方向键移动，确认键作答（也可按 1–4）"
+            tokenHint.setText(R.string.lock_token_hint_quiz)
             quizPanel.visibility = View.VISIBLE
             pinInput.isFocusable = true
             pinInput.isFocusableInTouchMode = true
@@ -269,9 +272,15 @@ class LockActivity : AppCompatActivity() {
             if (requestQuizFocus) {
                 handler.post { focusChoice(focusedChoice) }
             }
+        } else if (quotaLock) {
+            title.setText(R.string.lock_title_quota)
+            subtitle.setText(R.string.lock_hint_quota)
+            tokenHint.text = ""
+            quizPanel.visibility = View.GONE
         } else {
             title.setText(R.string.lock_title)
             subtitle.setText(R.string.lock_hint)
+            tokenHint.text = ""
             quizPanel.visibility = View.GONE
         }
 
@@ -282,14 +291,12 @@ class LockActivity : AppCompatActivity() {
     private fun updateStatusOnly() {
         val usedMin = prefs.dailyUsedMs / 60_000.0
         val quotaMin = prefs.dailyQuotaMinutes.toDouble()
-        val quizMin = prefs.msSinceLastQuiz / 60_000.0
-        val intervalMin = prefs.quizIntervalMinutes
-        findViewById<TextView>(R.id.statusLine).text =
-            if (prefs.quizPending) {
-                String.format("今日已看 %.0f / %.0f 分钟 · 答题后继续", usedMin, quotaMin)
-            } else {
-                String.format("今日已看 %.0f / %.0f 分钟 · 距下题约 %.0f/%d 分钟", usedMin, quotaMin, quizMin, intervalMin)
-            }
+        val status = findViewById<TextView>(R.id.statusLine)
+        status.text = when {
+            prefs.quizPending -> getString(R.string.lock_status_quiz, usedMin, quotaMin)
+            isQuotaExhaustedLock() -> getString(R.string.lock_status_quota, usedMin, quotaMin)
+            else -> getString(R.string.lock_status_locked, usedMin, quotaMin)
+        }
     }
 
     private fun enterImmersive() {
