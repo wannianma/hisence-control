@@ -104,17 +104,34 @@ class GuardService : Service() {
     private fun onTick() {
         val prefs = TvGuardApp.instance.prefs
         if (!prefs.locked && !prefs.isInUnlockWindow() && !prefs.quizPending) {
-            Log.i(TvGuardApp.TAG, "Unlock window expired → lock")
+            Log.i(TvGuardApp.TAG, "Unlock window expired - lock")
             prefs.lockNow()
         }
-        if (prefs.remainingQuotaMs() <= 0L && !prefs.isEffectivelyLocked()) {
-            Log.i(TvGuardApp.TAG, "Daily quota exhausted → lock")
+        if (prefs.remainingQuotaMs() <= 0L && !prefs.isInUnlockWindow() && !prefs.quizPending) {
+            Log.i(TvGuardApp.TAG, "Daily quota exhausted - lock")
             prefs.lockNow()
         }
-        if (prefs.isInUnlockWindow() && !prefs.quizPending) {
+
+        // Watch-time: only credit real content while unlocked. Never count LockActivity,
+        // MainActivity, or other own-UI, and never count while quiz-locked.
+        val top = watcher?.topInfo()
+        lastTopSource = top?.source ?: lastTopSource
+        lastTopPackage = top?.packageName ?: lastTopPackage
+        val watchingContent =
+            prefs.isInUnlockWindow() &&
+                !prefs.quizPending &&
+                !prefs.isEffectivelyLocked() &&
+                top?.packageName != null &&
+                top.packageName != packageName
+
+        if (watchingContent) {
+            prefs.ensureWatchSession()
             prefs.flushSessionUsage()
             prefs.checkAndTriggerQuiz()
+        } else {
+            prefs.stopWatchSession()
         }
+
         enforceLockIfNeeded(force = false)
         updateNotification()
     }
@@ -269,7 +286,7 @@ class GuardService : Service() {
         private const val NOTIF_ID = 1001
         private const val NOTIF_LOCK_ID = 1002
         const val ACTION_SHOW_LOCK = "com.family.tvguard.action.SHOW_LOCK"
-        const val VERSION_NAME = "1.0.0-m2.11"
+        const val VERSION_NAME = "1.0.0-m2.12"
 
         @Volatile
         var instance: GuardService? = null

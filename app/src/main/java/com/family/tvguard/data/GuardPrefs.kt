@@ -31,7 +31,7 @@ class GuardPrefs(context: Context) {
             rolloverIfNeeded()
             return sp.getLong(KEY_DAILY_USED, 0L)
         }
-        set(v) = sp.edit().putLong(KEY_DAILY_USED, v).apply()
+        set(v) = sp.edit().putLong(KEY_DAILY_USED, v.coerceAtLeast(0L)).apply()
 
     var dailyDate: String
         get() = sp.getString(KEY_DAILY_DATE, "") ?: ""
@@ -64,6 +64,7 @@ class GuardPrefs(context: Context) {
         set(v) = sp.edit().putString(KEY_QUIZ_ID, v).apply()
 
     fun ensureParentToken(): String {
+        migratePrefsSchemaIfNeeded()
         var t = parentToken
         if (t.isBlank()) {
             t = generateToken()
@@ -77,11 +78,33 @@ class GuardPrefs(context: Context) {
         return t
     }
 
+    /**
+     * Schema 2 (m2.12): watch clock no longer counts LockActivity / own UI / status polls.
+     * One-shot wipe of inflated dailyUsedMs from the pre-fix bug.
+     */
+    private fun migratePrefsSchemaIfNeeded() {
+        val schema = sp.getInt(KEY_PREFS_SCHEMA, 0)
+        if (schema >= PREFS_SCHEMA) return
+        val oldUsed = sp.getLong(KEY_DAILY_USED, 0L)
+        sp.edit()
+            .putInt(KEY_PREFS_SCHEMA, PREFS_SCHEMA)
+            .putLong(KEY_DAILY_USED, 0L)
+            .putLong(KEY_SESSION_START, 0L)
+            .putLong(KEY_MS_SINCE_QUIZ, 0L)
+            .commit()
+        Log.i(
+            TvGuardApp.TAG,
+            "prefs schema $schema -> $PREFS_SCHEMA; reset dailyUsedMs (was ${oldUsed}ms)"
+        )
+    }
+
     fun isEffectivelyLocked(now: Long = System.currentTimeMillis()): Boolean {
         rolloverIfNeeded(now)
+        // Quiz lock always wins (even inside parent unlock window).
         if (quizPending) return true
-        if (dailyUsedMs >= DAILY_QUOTA_MS) return true
+        // Active parent unlock window overrides daily quota until it expires.
         if (unlockUntilEpochMs > now) return false
+        if (dailyUsedMs >= DAILY_QUOTA_MS) return true
         return locked
     }
 
@@ -115,15 +138,45 @@ class GuardPrefs(context: Context) {
         lockNow()
     }
 
+    /**
+     * Credit elapsed watch time since [sessionStartEpochMs], then advance the cursor.
+     * Only call while the child is actually watching (unlocked, not on LockActivity / our UI).
+     */
     fun flushSessionUsage(now: Long = System.currentTimeMillis()) {
+        clampDailyUsedToElapsedDay(now)
         val start = sessionStartEpochMs
         if (start > 0L && now > start) {
             val delta = now - start
-            dailyUsedMs = dailyUsedMs + delta
+            // Cap a single flush so a stuck clock / long sleep cannot dump hours at once.
+            val credited = delta.coerceAtMost(WATCHER_INTERVAL_MS * 8)
+            dailyUsedMs = dailyUsedMs + credited
             if (!quizPending && isInUnlockWindow(now)) {
-                msSinceLastQuiz = msSinceLastQuiz + delta
+                msSinceLastQuiz = msSinceLastQuiz + credited
             }
             sessionStartEpochMs = now
+            clampDailyUsedToElapsedDay(now)
+        }
+    }
+
+    /** Pause the watch clock without crediting idle / lock / own-UI time. */
+    fun stopWatchSession() {
+        sessionStartEpochMs = 0L
+    }
+
+    fun ensureWatchSession(now: Long = System.currentTimeMillis()) {
+        if (sessionStartEpochMs <= 0L) {
+            sessionStartEpochMs = now
+        }
+    }
+
+    /** Watch minutes cannot exceed wall-clock since local midnight (Asia/Shanghai). */
+    fun clampDailyUsedToElapsedDay(now: Long = System.currentTimeMillis()) {
+        rolloverIfNeeded(now)
+        val maxPossible = (now - startOfDayEpochMs(now)).coerceAtLeast(0L)
+        val used = sp.getLong(KEY_DAILY_USED, 0L)
+        if (used > maxPossible) {
+            sp.edit().putLong(KEY_DAILY_USED, maxPossible).commit()
+            Log.w(TvGuardApp.TAG, "Clamped dailyUsedMs $used -> $maxPossible (since midnight)")
         }
     }
 
@@ -180,8 +233,16 @@ class GuardPrefs(context: Context) {
 
     fun remainingQuotaMs(now: Long = System.currentTimeMillis()): Long {
         rolloverIfNeeded(now)
-        flushSessionUsage(now)
+        clampDailyUsedToElapsedDay(now)
+        // Do not flush here — status polls / quota checks must not invent watch time.
         return (DAILY_QUOTA_MS - dailyUsedMs).coerceAtLeast(0L)
+    }
+
+    /** Snapshot used today without advancing the session clock. */
+    fun dailyUsedMsSnapshot(now: Long = System.currentTimeMillis()): Long {
+        rolloverIfNeeded(now)
+        clampDailyUsedToElapsedDay(now)
+        return dailyUsedMs
     }
 
     fun verifyPin(pin: String): Boolean {
@@ -201,8 +262,10 @@ class GuardPrefs(context: Context) {
             sp.edit()
                 .putString(KEY_DAILY_DATE, today)
                 .putLong(KEY_DAILY_USED, 0L)
+                .putLong(KEY_SESSION_START, 0L)
+                .putLong(KEY_MS_SINCE_QUIZ, 0L)
                 .apply()
-            Log.i(TvGuardApp.TAG, "Daily usage reset for $today")
+            Log.i(TvGuardApp.TAG, "Daily usage reset for $today (Asia/Shanghai)")
         }
     }
 
@@ -216,6 +279,8 @@ class GuardPrefs(context: Context) {
         const val WATCHER_INTERVAL_MS = 1_500L
         const val QUIZ_INTERVAL_MS = 10L * 60_000 // 10 minutes watching
 
+        const val PREFS_SCHEMA = 2
+        private const val KEY_PREFS_SCHEMA = "prefsSchema"
         private const val KEY_LOCKED = "locked"
         private const val KEY_UNLOCK_UNTIL = "unlockUntilEpochMs"
         private const val KEY_DAILY_USED = "dailyUsedMs"
@@ -239,10 +304,22 @@ class GuardPrefs(context: Context) {
             return dig.joinToString("") { "%02x".format(it) }
         }
 
+        private val SHANGHAI: TimeZone = TimeZone.getTimeZone("Asia/Shanghai")
+
         fun localDateString(epochMs: Long): String {
             val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
-            fmt.timeZone = TimeZone.getDefault()
+            fmt.timeZone = SHANGHAI
             return fmt.format(Date(epochMs))
+        }
+
+        fun startOfDayEpochMs(epochMs: Long): Long {
+            val cal = java.util.Calendar.getInstance(SHANGHAI)
+            cal.timeInMillis = epochMs
+            cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+            cal.set(java.util.Calendar.MINUTE, 0)
+            cal.set(java.util.Calendar.SECOND, 0)
+            cal.set(java.util.Calendar.MILLISECOND, 0)
+            return cal.timeInMillis
         }
     }
 }

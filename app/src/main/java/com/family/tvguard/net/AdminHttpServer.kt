@@ -1,4 +1,4 @@
-﻿package com.family.tvguard.net
+package com.family.tvguard.net
 
 import android.util.Log
 import com.family.tvguard.TvGuardApp
@@ -49,7 +49,8 @@ class AdminHttpServer(
     }
 
     private fun statusJson(): Response {
-        prefs.flushSessionUsage()
+        // Read-only snapshot — do not flushSessionUsage (that would invent watch time).
+        prefs.clampDailyUsedToElapsedDay()
         val now = System.currentTimeMillis()
         val app = TvGuardApp.instance
         val usageGranted = UsageAccessHelper.hasUsageAccess(app)
@@ -59,13 +60,13 @@ class AdminHttpServer(
             .put("prefsLocked", prefs.locked)
             .put("unlockUntilEpochMs", prefs.unlockUntilEpochMs)
             .put("remainingUnlockMs", prefs.remainingUnlockMs(now))
-            .put("dailyUsedMs", prefs.dailyUsedMs)
+            .put("dailyUsedMs", prefs.dailyUsedMsSnapshot(now))
             .put("dailyDate", prefs.dailyDate)
             .put("dailyQuotaMs", GuardPrefs.DAILY_QUOTA_MS)
             .put("remainingQuotaMs", prefs.remainingQuotaMs(now))
             .put("port", GuardPrefs.HTTP_PORT)
             .put("version", GuardService.VERSION_NAME)
-            .put("versionCode", 13)
+            .put("versionCode", 14)
             .put("quizPending", prefs.quizPending)
             .put("msSinceLastQuiz", prefs.msSinceLastQuiz)
             .put("quizIntervalMs", GuardPrefs.QUIZ_INTERVAL_MS)
@@ -229,11 +230,11 @@ class AdminHttpServer(
 
     private fun adminHtml(): Response {
         val st = run {
-            prefs.flushSessionUsage()
+            prefs.clampDailyUsedToElapsedDay()
             val now = System.currentTimeMillis()
             val locked = prefs.isEffectivelyLocked(now)
             val rem = prefs.remainingUnlockMs(now) / 60000
-            val used = prefs.dailyUsedMs / 60000
+            val used = prefs.dailyUsedMsSnapshot(now) / 60000
             Triple(locked, rem, used)
         }
         val html = """
@@ -257,7 +258,7 @@ class AdminHttpServer(
 </head>
 <body>
   <h1>家庭电视锁</h1>
-  <div class="sub">同一 WiFi · 家长控制 · M2.11 · Usage Access 建议开启</div>
+  <div class="sub">同一 WiFi · 家长控制 · M2.12 · Usage Access 建议开启</div>
   <div class="card">
     <div class="status">${if (st.first) "已锁定" else "解锁中（剩余约 ${st.second} 分钟）"}</div>
     <div class="sub">今日已看 ${st.third} / 120 分钟</div>

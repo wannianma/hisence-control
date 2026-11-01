@@ -1,4 +1,4 @@
-﻿plugins {
+plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -11,8 +11,8 @@ android {
         applicationId = "com.family.tvguard"
         minSdk = 28
         targetSdk = 34
-        versionCode = 13
-        versionName = "1.0.0-m2.11"
+        versionCode = 14
+        versionName = "1.0.0-m2.12"
         // TV leanback optional; keep phone/tablet/TV installable
     }
 
