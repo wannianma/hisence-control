@@ -89,7 +89,7 @@ class AdminHttpServer(
             .put("remainingQuotaMs", prefs.remainingQuotaMs(now))
             .put("port", GuardPrefs.HTTP_PORT)
             .put("version", GuardService.VERSION_NAME)
-            .put("versionCode", 16)
+            .put("versionCode", 17)
             .put("quizPending", prefs.quizPending)
             .put("msSinceLastQuiz", prefs.msSinceLastQuiz)
             .put("quizIntervalMs", prefs.quizIntervalMs)
@@ -257,7 +257,7 @@ class AdminHttpServer(
         .put("dailyQuotaMs", prefs.dailyQuotaMs)
         .put("defaultUnlockHours", prefs.defaultUnlockHours)
         .put("version", GuardService.VERSION_NAME)
-        .put("versionCode", 16)
+        .put("versionCode", 17)
 
     private fun forceQuiz(session: IHTTPSession): Response {
         if (!authorized(session)) return unauthorized(session)

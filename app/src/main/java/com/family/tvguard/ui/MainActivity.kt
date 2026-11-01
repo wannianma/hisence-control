@@ -60,7 +60,7 @@ class MainActivity : AppCompatActivity() {
         val ip = IpUtils.localIpv4() ?: "?"
         val usage = UsageAccessHelper.statusLabel(this)
         findViewById<TextView>(R.id.info).text = buildString {
-            appendLine("版本: ${GuardService.VERSION_NAME} (16)")
+            appendLine("版本: ${GuardService.VERSION_NAME} (17)")
             appendLine("IP: $ip:${GuardPrefs.HTTP_PORT}")
             appendLine("管理页: http://$ip:${GuardPrefs.HTTP_PORT}/admin/")
             appendLine("Token: ${prefs.parentToken}")

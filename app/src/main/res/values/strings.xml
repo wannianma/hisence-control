@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">家庭电视锁</string>
-    <string name="lock_title">休息一下，答对才能继续</string>
-    <string name="lock_hint">请用手机打开同一 WiFi 下的管理页解锁</string>
+    <string name="lock_title">电视已锁定</string>
+    <string name="lock_hint">请家长输入 PIN 解锁</string>
+    <string name="lock_title_quota">今日观看时间已用完</string>
+    <string name="lock_hint_quota">今天的观看时间已经用完，答题不能解锁。请家长输入 PIN，或用手机管理页解锁。</string>
+    <string name="lock_status_quiz">今日已看 %1$.0f / %2$.0f 分钟 · 答题后继续</string>
+    <string name="lock_status_quota">今日已看 %1$.0f / %2$.0f 分钟 · 今日额度已用完</string>
+    <string name="lock_status_locked">今日已看 %1$.0f / %2$.0f 分钟 · 请家长解锁</string>
+    <string name="lock_token_hint_quiz">遥控器：黄框=当前选项，确认键作答 · PIN 家长绕过</string>
     <string name="lock_pin_hint">或输入家长 PIN</string>
     <string name="btn_unlock_pin">家长 PIN 解锁</string>
     <string name="channel_guard">电视守护</string>
