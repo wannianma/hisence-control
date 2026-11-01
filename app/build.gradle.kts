@@ -11,8 +11,8 @@ android {
         applicationId = "com.family.tvguard"
         minSdk = 28
         targetSdk = 34
-        versionCode = 17
-        versionName = "1.0.0-m2.15"
+        versionCode = 18
+        versionName = "1.0.0-m2.16"
         // TV leanback optional; keep phone/tablet/TV installable
     }
 
@@ -37,6 +37,7 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        buildConfig = true
     }
     packaging {
         resources {

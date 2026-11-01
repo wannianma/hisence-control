@@ -59,8 +59,9 @@ class MainActivity : AppCompatActivity() {
         val prefs = TvGuardApp.instance.prefs
         val ip = IpUtils.localIpv4() ?: "?"
         val usage = UsageAccessHelper.statusLabel(this)
+        val usageOn = UsageAccessHelper.hasUsageAccess(this)
         findViewById<TextView>(R.id.info).text = buildString {
-            appendLine("版本: ${GuardService.VERSION_NAME} (17)")
+            appendLine("版本: ${GuardService.VERSION_NAME} (${GuardService.VERSION_CODE})")
             appendLine("IP: $ip:${GuardPrefs.HTTP_PORT}")
             appendLine("管理页: http://$ip:${GuardPrefs.HTTP_PORT}/admin/")
             appendLine("Token: ${prefs.parentToken}")
@@ -68,11 +69,13 @@ class MainActivity : AppCompatActivity() {
             appendLine("今日已用: ${prefs.dailyUsedMs / 60000} / ${prefs.dailyQuotaMinutes} 分钟")
             appendLine("答题间隔: ${prefs.quizIntervalMinutes} 分钟")
             appendLine("使用情况访问: $usage")
-            appendLine("前台检测: ${if (UsageAccessHelper.hasUsageAccess(this@MainActivity)) "UsageStats" else "启发式回退"}")
+            appendLine("前台检测: ${if (usageOn) "UsageStats" else "启发式回退"}")
             appendLine()
             appendLine("不会替换 CleanYourTV 桌面。")
-            appendLine("开机保活: BootReceiver + 5 分钟闹钟 sidekick。")
-            appendLine("海信请在「启动管理」白名单本应用。")
+            appendLine(getString(R.string.hint_autostart))
+            if (!usageOn) {
+                appendLine(getString(R.string.hint_usage_access))
+            }
             appendLine("Device Owner: 未启用（需清机，家庭电视不安全）。")
         }
     }

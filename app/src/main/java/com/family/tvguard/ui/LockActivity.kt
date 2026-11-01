@@ -50,7 +50,19 @@ class LockActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        prefs = TvGuardApp.instance.prefs
+        val app = TvGuardApp.instance
+        if (!app.ensurePrefs()) {
+            finish()
+            return
+        }
+        prefs = app.prefs
+        // Alarm / full-screen intent can open this while a parent unlock is active.
+        // Close before drawing so an in-flight alarm does not flash the lock UI.
+        GuardService.start(this)
+        if (!prefs.isEffectivelyLocked()) {
+            finish()
+            return
+        }
         window.addFlags(
             WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
                 WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
@@ -60,8 +72,6 @@ class LockActivity : AppCompatActivity() {
         )
         setContentView(R.layout.activity_lock)
         enterImmersive()
-
-        GuardService.start(this)
 
         val btnPin = findViewById<Button>(R.id.btnPin)
         btnPin.setOnClickListener {
@@ -107,8 +117,14 @@ class LockActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        if (!::prefs.isInitialized) {
+            finish()
+            return
+        }
+        isResumed = true
         enterImmersive()
         if (!prefs.isEffectivelyLocked()) {
+            isResumed = false
             finish()
             return
         }
@@ -122,12 +138,14 @@ class LockActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        isResumed = false
         handler.removeCallbacks(refresh)
         super.onPause()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (!::prefs.isInitialized) return
         if (hasFocus) {
             enterImmersive()
             if (prefs.quizPending) focusChoice(focusedChoice)
@@ -293,6 +311,11 @@ class LockActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** True while the lock UI is in the foreground. Cleared on pause / process death. */
+        @Volatile
+        var isResumed: Boolean = false
+            private set
+
         fun intent(ctx: android.content.Context) =
             android.content.Intent(ctx, LockActivity::class.java).apply {
                 addFlags(

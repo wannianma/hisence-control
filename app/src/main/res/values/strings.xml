@@ -13,4 +13,6 @@
     <string name="btn_unlock_pin">家长 PIN 解锁</string>
     <string name="channel_guard">电视守护</string>
     <string name="notif_guard_running">电视锁守护运行中</string>
+    <string name="hint_autostart">开机自启：开机广播 + 快速开机(IPO) + 持久化任务 + 短间隔闹钟。若重启后仍不锁屏，请到海信「设置 → 应用 → 启动管理」允许「家庭电视锁」自启动和后台运行。</string>
+    <string name="hint_usage_access">未开启「使用情况访问」时守护仍会启动，但前台应用检测可能不准。建议：设置 → 应用 → 特殊应用权限 → 使用情况访问权限 → 家庭电视锁。</string>
 </resources>

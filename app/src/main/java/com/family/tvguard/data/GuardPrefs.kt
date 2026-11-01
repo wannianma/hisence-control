@@ -360,7 +360,11 @@ class GuardPrefs(context: Context) {
         const val DAILY_QUOTA_MS = DEFAULT_DAILY_QUOTA_MINUTES * 60_000L
         const val QUIZ_INTERVAL_MS = DEFAULT_QUIZ_INTERVAL_MINUTES * 60_000L
         const val DEFAULT_PIN = "000000"
-        const val BOOT_GRACE_MS = 20_000L
+        /**
+         * Only the first seconds of *device* uptime. Do not reuse this as a delay
+         * after every service restart — that left the TV unlocked after a kill.
+         */
+        const val BOOT_GRACE_MS = 8_000L
         const val WATCHER_INTERVAL_MS = 1_500L
 
         const val PREFS_SCHEMA = 2

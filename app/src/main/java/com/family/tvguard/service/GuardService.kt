@@ -1,6 +1,7 @@
 package com.family.tvguard.service
 
 import android.app.ActivityManager
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -8,6 +9,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -15,6 +17,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.family.tvguard.BuildConfig
 import com.family.tvguard.R
 import com.family.tvguard.TvGuardApp
 import com.family.tvguard.data.GuardPrefs
@@ -30,8 +33,9 @@ class GuardService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var http: AdminHttpServer? = null
     private var watcher: TopActivityWatcher? = null
-    private var startedElapsed: Long = 0L
     private var relaunchAttempts = 0
+    private var lastLockAlarmElapsed = 0L
+
     @Volatile var lastTopSource: String = "none"
         private set
     @Volatile var lastTopPackage: String? = null
@@ -51,11 +55,25 @@ class GuardService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
-        startedElapsed = SystemClock.elapsedRealtime()
         createChannel()
-        startForeground(NOTIF_ID, buildNotification("守护运行中"))
-        val prefs = TvGuardApp.instance.prefs
+        // Must call startForeground even if we bail out — otherwise startForegroundService crashes.
+        promoteForeground("守护运行中")
+        val app = application as TvGuardApp
+        if (!app.ensurePrefs()) {
+            Log.w(TvGuardApp.TAG, "GuardService created before user unlock; retry after unlock")
+            KeepAliveScheduler.scheduleFastRetry(this)
+            stopSelf()
+            return
+        }
+        val prefs = app.prefs
         prefs.ensureParentToken()
+        if (!UsageAccessHelper.hasUsageAccess(this)) {
+            Log.w(
+                TvGuardApp.TAG,
+                "Usage Access missing at service start — guarding anyway, top-app detection falls back. " +
+                    "开启：设置 → 特殊应用权限 → 使用情况访问权限 → 家庭电视锁"
+            )
+        }
         try {
             http = AdminHttpServer(prefs) { reason ->
                 Log.i(TvGuardApp.TAG, "HTTP state change: $reason")
@@ -74,13 +92,25 @@ class GuardService : Service() {
         watcher = TopActivityWatcher(this)
         KeepAliveScheduler.schedule(this)
         handler.post(tick)
+        val graceLeft = bootGraceRemaining()
+        handler.postDelayed({ enforceLockIfNeeded(force = false) }, graceLeft + 300L)
         Log.i(
             TvGuardApp.TAG,
-            "GuardService created usageAccess=${UsageAccessHelper.hasUsageAccess(this)} mode=${watcher?.detectionMode()}"
+            "GuardService created usageAccess=${UsageAccessHelper.hasUsageAccess(this)} " +
+                "mode=${watcher?.detectionMode()} bootGraceLeft=${graceLeft}ms"
         )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // System can recreate a killed FGS before onCreate's startForeground on some OEMs.
+        createChannel()
+        promoteForeground("守护运行中")
+        val app = application as TvGuardApp
+        if (!app.ensurePrefs()) {
+            KeepAliveScheduler.scheduleFastRetry(this)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_SHOW_LOCK) {
             handler.post { enforceLockIfNeeded(force = true) }
         }
@@ -94,9 +124,16 @@ class GuardService : Service() {
         http = null
         watcher = null
         if (instance === this) instance = null
-        Log.w(TvGuardApp.TAG, "GuardService destroyed — scheduling keepalive restart")
-        KeepAliveScheduler.schedule(applicationContext)
+        Log.w(TvGuardApp.TAG, "GuardService destroyed — scheduling fast restart")
+        // Alarm only. Starting the service from onDestroy races the teardown.
+        KeepAliveScheduler.scheduleFastRetry(applicationContext)
         super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        Log.w(TvGuardApp.TAG, "onTaskRemoved — re-arm guard")
+        KeepAliveScheduler.scheduleFastRetry(applicationContext)
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -138,6 +175,7 @@ class GuardService : Service() {
         }
 
         enforceLockIfNeeded(force = false)
+        KeepAliveScheduler.schedule(this)
         updateNotification()
     }
 
@@ -145,14 +183,15 @@ class GuardService : Service() {
         val prefs = TvGuardApp.instance.prefs
         if (!prefs.isEffectivelyLocked()) {
             relaunchAttempts = 0
+            lastLockAlarmElapsed = 0L
+            cancelSystemLockAlarm()
             return
         }
 
-        val sinceBoot = SystemClock.elapsedRealtime() - startedElapsed
-        val uptime = SystemClock.elapsedRealtime()
-        val inGrace = uptime < GuardPrefs.BOOT_GRACE_MS || sinceBoot < GuardPrefs.BOOT_GRACE_MS
-        if (inGrace && !force) {
-            Log.d(TvGuardApp.TAG, "boot grace ${GuardPrefs.BOOT_GRACE_MS}ms, skip relaunch")
+        val graceLeft = bootGraceRemaining()
+        if (inBootGrace(force)) {
+            Log.d(TvGuardApp.TAG, "device boot grace ${graceLeft}ms left, defer relaunch")
+            armSystemLockAlarm(graceLeft + 400L)
             return
         }
 
@@ -161,22 +200,36 @@ class GuardService : Service() {
         val topAct = info?.activityClass
         lastTopSource = info?.source ?: "none"
         lastTopPackage = topPkg
-        // Require explicit LockActivity class — never treat "same package / unknown activity" as locked UI
-        val isLock =
-            topPkg == packageName &&
+        // LockActivity.onResume is authoritative. Usage events are often empty right after boot,
+        // and "unknown" from queryUsageStats must not count as the lock UI.
+        val isLock = LockActivity.isResumed ||
+            (topPkg == packageName &&
                 topAct != null &&
-                topAct.contains("LockActivity")
+                topAct.contains("LockActivity"))
 
         if (force || !isLock) {
-            Log.i(TvGuardApp.TAG, "bring LockActivity force=$force top=$topPkg/$topAct src=$lastTopSource")
+            Log.i(TvGuardApp.TAG, "bring LockActivity force=$force top=$topPkg/$topAct src=$lastTopSource resumed=${LockActivity.isResumed}")
             bringLockToFront()
+            armSystemLockAlarm(1_500L)
             relaunchAttempts++
             if (!isLock && relaunchAttempts <= 8) {
-                handler.postDelayed({ enforceLockIfNeeded(force = true) }, 800)
+                // force=false: once LockActivity is resumed, stop relaunching (quiz focus).
+                handler.postDelayed({ enforceLockIfNeeded(force = false) }, 800)
             }
         } else {
             relaunchAttempts = 0
         }
+    }
+
+    /** Grace applies only to device uptime, and never to an explicit show-lock. */
+    private fun inBootGrace(force: Boolean): Boolean {
+        if (force) return false
+        return bootGraceRemaining() > 0L
+    }
+
+    private fun bootGraceRemaining(): Long {
+        val uptime = SystemClock.elapsedRealtime()
+        return (GuardPrefs.BOOT_GRACE_MS - uptime).coerceAtLeast(0L)
     }
 
     private fun bringLockToFront() {
@@ -215,6 +268,53 @@ class GuardService : Service() {
         }
     }
 
+    /**
+     * System-delivered activity PendingIntent. On API 28 this still runs when a
+     * background startActivity from the service is ignored by the OEM.
+     * Non-wakeup so standby does not turn the panel on.
+     */
+    private fun armSystemLockAlarm(delayMs: Long) {
+        val now = SystemClock.elapsedRealtime()
+        if (lastLockAlarmElapsed != 0L && now - lastLockAlarmElapsed < 8_000L) return
+        lastLockAlarmElapsed = now
+        try {
+            val am = getSystemService(ALARM_SERVICE) as AlarmManager
+            val trigger = now + delayMs.coerceAtLeast(500L)
+            val pi = lockActivityPending()
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME, trigger, pi)
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.setExact(AlarmManager.ELAPSED_REALTIME, trigger, pi)
+                }
+            } catch (se: SecurityException) {
+                Log.w(TvGuardApp.TAG, "lock alarm exact denied: ${se.message}")
+                am.set(AlarmManager.ELAPSED_REALTIME, trigger, pi)
+            }
+            Log.i(TvGuardApp.TAG, "lock activity alarm +${delayMs}ms")
+        } catch (e: Exception) {
+            Log.w(TvGuardApp.TAG, "lock alarm failed: ${e.message}")
+        }
+    }
+
+    private fun cancelSystemLockAlarm() {
+        try {
+            val am = getSystemService(ALARM_SERVICE) as AlarmManager
+            am.cancel(lockActivityPending())
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun lockActivityPending(): PendingIntent {
+        return PendingIntent.getActivity(
+            this,
+            REQ_LOCK_ALARM,
+            LockActivity.intent(this),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = getSystemService(NotificationManager::class.java)
@@ -233,8 +333,22 @@ class GuardService : Service() {
                 ).apply {
                     setSound(null, null)
                     enableVibration(false)
+                    lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 }
             )
+        }
+    }
+
+    private fun promoteForeground(text: String) {
+        val notification = buildNotification(text)
+        if (Build.VERSION.SDK_INT >= 34) {
+            startForeground(
+                NOTIF_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIF_ID, notification)
         }
     }
 
@@ -250,6 +364,7 @@ class GuardService : Service() {
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentIntent(pi)
             .setOngoing(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build()
     }
 
@@ -263,8 +378,9 @@ class GuardService : Service() {
             .setContentTitle("电视已锁定")
             .setContentText("点击返回锁屏 / 答题")
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setFullScreenIntent(full, true)
             .setContentIntent(full)
             .setAutoCancel(true)
@@ -292,19 +408,44 @@ class GuardService : Service() {
         private const val CHANNEL_LOCK = "tvguard_lock_alert"
         private const val NOTIF_ID = 1001
         private const val NOTIF_LOCK_ID = 1002
+        private const val REQ_LOCK_ALARM = 7103
         const val ACTION_SHOW_LOCK = "com.family.tvguard.action.SHOW_LOCK"
-        const val VERSION_NAME = "1.0.0-m2.15"
+        const val VERSION_NAME = BuildConfig.VERSION_NAME
+        const val VERSION_CODE = BuildConfig.VERSION_CODE
 
         @Volatile
         var instance: GuardService? = null
             private set
 
-        fun start(context: Context) {
-            val i = Intent(context, GuardService::class.java)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(i)
+        fun start(context: Context, showLock: Boolean = false) {
+            val appCtx = context.applicationContext
+            val app = appCtx as? TvGuardApp
+            if (app != null && !app.ensurePrefs()) {
+                Log.i(TvGuardApp.TAG, "GuardService.start deferred until user unlock showLock=$showLock")
+                KeepAliveScheduler.scheduleFastRetry(appCtx)
+                return
+            }
+            if (instance == null) {
+                KeepAliveScheduler.scheduleFastRetry(appCtx)
             } else {
-                context.startService(i)
+                KeepAliveScheduler.schedule(appCtx)
+            }
+            val i = Intent(appCtx, GuardService::class.java)
+            if (showLock) i.action = ACTION_SHOW_LOCK
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appCtx.startForegroundService(i)
+                } else {
+                    appCtx.startService(i)
+                }
+            } catch (e: Exception) {
+                Log.e(TvGuardApp.TAG, "startForegroundService failed: ${e.javaClass.simpleName} ${e.message}", e)
+                KeepAliveScheduler.scheduleFastRetry(appCtx)
+                try {
+                    appCtx.startService(i)
+                } catch (e2: Exception) {
+                    Log.e(TvGuardApp.TAG, "startService fallback failed: ${e2.message}", e2)
+                }
             }
         }
     }

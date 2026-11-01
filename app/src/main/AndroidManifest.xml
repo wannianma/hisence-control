@@ -8,6 +8,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Full-screen lock notification. Ignored on API 28; required when targetSdk is 34. -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission
@@ -59,25 +61,38 @@
         <service
             android:name=".service.GuardService"
             android:exported="false"
+            android:stopWithTask="false"
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="parental_tv_lock_watcher" />
         </service>
 
+        <!-- Persisted JobScheduler nudge. System restores this after reboot without our receiver. -->
+        <service
+            android:name=".service.GuardRestartJob"
+            android:exported="true"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <receiver
             android:name=".receiver.BootReceiver"
             android:exported="true"
             android:enabled="true"
             android:directBootAware="true">
-            <intent-filter>
+            <!-- priority: run early so the lock is up before a child opens another app. -->
+            <intent-filter android:priority="999">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.USER_PRESENT" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
                 <action android:name="android.intent.action.REBOOT" />
+                <!-- MediaTek IPO: Hisense M7332 power button is often suspend, not cold boot. -->
+                <action android:name="android.intent.action.ACTION_BOOT_IPO" />
+                <action android:name="android.intent.action.ACTION_PREBOOT_IPO" />
+                <action android:name="com.mediatek.intent.action.ACTION_BOOT_IPO" />
             </intent-filter>
         </receiver>
 
