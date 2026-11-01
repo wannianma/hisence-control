@@ -14,7 +14,8 @@ import java.io.InputStreamReader
  * LAN parent control API + simple mobile HTML admin.
  *
  * GET  /v1/status
- * POST /v1/unlock   {"hours":2}  Authorization: Bearer <token> | ?token= | X-Token
+ * POST /v1/unlock        {"hours":2}  Authorization: Bearer <token> | ?token= | X-Token
+ * POST /v1/full-unlock   {"hours":2}  thorough unlock: no quiz, quota does not re-lock
  * POST /v1/lock
  * POST /v1/cancel-unlock
  * GET  /admin/
@@ -24,6 +25,14 @@ class AdminHttpServer(
     private val onStateChanged: (String) -> Unit
 ) : NanoHTTPD(GuardPrefs.HTTP_PORT) {
 
+    private data class AdminStatus(
+        val locked: Boolean,
+        val rem: Long,
+        val used: Long,
+        val full: Boolean,
+        val fullRem: Long,
+    )
+
     override fun serve(session: IHTTPSession): Response {
         val uri = session.uri?.substringBefore('?') ?: "/"
         val method = session.method
@@ -32,10 +41,12 @@ class AdminHttpServer(
             when {
                 uri == "/v1/status" && method == Method.GET -> statusJson()
                 uri == "/v1/unlock" && method == Method.POST -> unlock(session)
+                uri == "/v1/full-unlock" && method == Method.POST -> fullUnlock(session)
                 uri == "/v1/lock" && method == Method.POST -> lock(session)
                 uri == "/v1/cancel-unlock" && method == Method.POST -> cancel(session)
                 uri == "/admin" || uri == "/admin/" || uri == "/" -> adminHtml()
                 uri == "/admin/api/unlock" && method == Method.POST -> unlockFromForm(session)
+                uri == "/admin/api/full-unlock" && method == Method.POST -> fullUnlockFromForm(session)
                 uri == "/admin/api/lock" && method == Method.POST -> lockFromForm(session)
                 uri == "/admin/api/cancel" && method == Method.POST -> cancelFromForm(session)
                 uri == "/admin/api/force-quiz" && method == Method.POST -> forceQuizFromForm(session)
@@ -60,13 +71,16 @@ class AdminHttpServer(
             .put("prefsLocked", prefs.locked)
             .put("unlockUntilEpochMs", prefs.unlockUntilEpochMs)
             .put("remainingUnlockMs", prefs.remainingUnlockMs(now))
+            .put("fullUnlock", prefs.isFullUnlockActive(now))
+            .put("fullUnlockUntilEpochMs", prefs.fullUnlockUntilEpochMs)
+            .put("remainingFullUnlockMs", prefs.remainingFullUnlockMs(now))
             .put("dailyUsedMs", prefs.dailyUsedMsSnapshot(now))
             .put("dailyDate", prefs.dailyDate)
             .put("dailyQuotaMs", GuardPrefs.DAILY_QUOTA_MS)
             .put("remainingQuotaMs", prefs.remainingQuotaMs(now))
             .put("port", GuardPrefs.HTTP_PORT)
             .put("version", GuardService.VERSION_NAME)
-            .put("versionCode", 14)
+            .put("versionCode", 15)
             .put("quizPending", prefs.quizPending)
             .put("msSinceLastQuiz", prefs.msSinceLastQuiz)
             .put("quizIntervalMs", GuardPrefs.QUIZ_INTERVAL_MS)
@@ -94,6 +108,21 @@ class AdminHttpServer(
         if (hours <= 0) hours = GuardPrefs.DEFAULT_UNLOCK_HOURS
         prefs.unlockHours(hours)
         onStateChanged("unlock ${hours}h")
+        return statusJson()
+    }
+
+    private fun fullUnlock(session: IHTTPSession): Response {
+        if (!authorized(session)) return unauthorized(session)
+        val body = readBody(session)
+        var hours = GuardPrefs.DEFAULT_UNLOCK_HOURS
+        if (body.isNotBlank()) {
+            try {
+                hours = JSONObject(body).optDouble("hours", hours)
+            } catch (_: Exception) {}
+        }
+        if (hours <= 0) hours = GuardPrefs.DEFAULT_UNLOCK_HOURS
+        prefs.fullUnlockHours(hours)
+        onStateChanged("full-unlock ${hours}h")
         return statusJson()
     }
 
@@ -125,6 +154,20 @@ class AdminHttpServer(
         prefs.unlockHours(hours)
         onStateChanged("unlock-form ${hours}h")
         return redirectAdmin("已解锁 ${hours} 小时")
+    }
+
+    private fun fullUnlockFromForm(session: IHTTPSession): Response {
+        val map = HashMap<String, String>()
+        session.parseBody(map)
+        val token = map["token"] ?: session.parms["token"]
+        if (!prefs.tokenMatches(token) && !prefs.tokenMatches("Bearer $token") && !authorized(session)) {
+            return redirectAdmin("token 无效")
+        }
+        val hours = (map["hours"] ?: session.parms["hours"] ?: "2").toDoubleOrNull()
+            ?: GuardPrefs.DEFAULT_UNLOCK_HOURS
+        prefs.fullUnlockHours(hours)
+        onStateChanged("full-unlock-form ${hours}h")
+        return redirectAdmin("已彻底解锁 ${hours} 小时（无答题/配额不重锁）")
     }
 
     private fun lockFromForm(session: IHTTPSession): Response {
@@ -235,7 +278,9 @@ class AdminHttpServer(
             val locked = prefs.isEffectivelyLocked(now)
             val rem = prefs.remainingUnlockMs(now) / 60000
             val used = prefs.dailyUsedMsSnapshot(now) / 60000
-            Triple(locked, rem, used)
+            val full = prefs.isFullUnlockActive(now)
+            val fullRem = prefs.remainingFullUnlockMs(now) / 60000
+            AdminStatus(locked, rem, used, full, fullRem)
         }
         val html = """
 <!DOCTYPE html>
@@ -258,15 +303,20 @@ class AdminHttpServer(
 </head>
 <body>
   <h1>家庭电视锁</h1>
-  <div class="sub">同一 WiFi · 家长控制 · M2.12 · Usage Access 建议开启</div>
+  <div class="sub">同一 WiFi · 家长控制 · M2.13 · Usage Access 建议开启</div>
   <div class="card">
-    <div class="status">${if (st.first) "已锁定" else "解锁中（剩余约 ${st.second} 分钟）"}</div>
-    <div class="sub">今日已看 ${st.third} / 120 分钟</div>
+    <div class="status">${when {
+        st.locked -> "已锁定"
+        st.full -> "彻底解锁中（剩余约 ${st.fullRem} 分钟）"
+        else -> "解锁中（剩余约 ${st.rem} 分钟）"
+      }}</div>
+    <div class="sub">今日已看 ${st.used} / 120 分钟</div>
   </div>
   <div class="card">
     <label>家长 Token（电视锁屏页 / adb logcat / parent_token.txt）</label>
     <input id="token" type="text" placeholder="粘贴 parentToken" autocomplete="off"/>
     <button class="u" type="button" onclick="api('unlock',{hours:2})">解锁 2 小时</button>
+    <button class="u" type="button" style="background:#00897b" onclick="api('full-unlock',{hours:2})">彻底解锁 2 小时</button>
     <button class="l" type="button" onclick="api('lock')">立即锁屏</button>
     <button class="c" type="button" onclick="api('cancel-unlock')">取消解锁</button>
     <button class="c" type="button" style="background:#8e24aa" onclick="api('force-quiz')">立即出题（测试）</button>
@@ -310,6 +360,7 @@ function applyStatus(s){
   var sub=document.querySelectorAll('.card .sub')[0];
   if(statusEl){
     if(s.locked){statusEl.textContent='已锁定';}
+    else if(s.fullUnlock){statusEl.textContent='彻底解锁中（剩余约 '+Math.floor((s.remainingFullUnlockMs||0)/60000)+' 分钟）';}
     else{statusEl.textContent='解锁中（剩余约 '+Math.floor((s.remainingUnlockMs||0)/60000)+' 分钟）';}
   }
   if(sub){sub.textContent='今日已看 '+Math.floor((s.dailyUsedMs||0)/60000)+' / 120 分钟';}
@@ -340,6 +391,7 @@ function api(path, body){
     }
     applyStatus(x.j);
     if(path==='lock'||path==='cancel-unlock'){ msg.textContent='已立即锁屏'; }
+    else if(path==='full-unlock'){ msg.textContent='已彻底解锁 2 小时（无答题/配额不重锁）'; }
     else if(path==='unlock'){ msg.textContent='已解锁'; }
     else if(path==='force-quiz'){ msg.textContent='已触发答题锁屏'; }
     else { msg.textContent='OK'; }

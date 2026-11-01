@@ -103,13 +103,18 @@ class GuardService : Service() {
 
     private fun onTick() {
         val prefs = TvGuardApp.instance.prefs
-        if (!prefs.locked && !prefs.isInUnlockWindow() && !prefs.quizPending) {
-            Log.i(TvGuardApp.TAG, "Unlock window expired - lock")
-            prefs.lockNow()
-        }
-        if (prefs.remainingQuotaMs() <= 0L && !prefs.isInUnlockWindow() && !prefs.quizPending) {
-            Log.i(TvGuardApp.TAG, "Daily quota exhausted - lock")
-            prefs.lockNow()
+        if (prefs.isFullUnlockActive()) {
+            // Thorough unlock: never re-lock from quota/quiz; clear stray quiz flags.
+            if (prefs.quizPending) prefs.quizPending = false
+        } else {
+            if (!prefs.locked && !prefs.isInUnlockWindow() && !prefs.quizPending) {
+                Log.i(TvGuardApp.TAG, "Unlock window expired - lock")
+                prefs.lockNow()
+            }
+            if (prefs.remainingQuotaMs() <= 0L && !prefs.isInUnlockWindow() && !prefs.quizPending) {
+                Log.i(TvGuardApp.TAG, "Daily quota exhausted - lock")
+                prefs.lockNow()
+            }
         }
 
         // Watch-time: only credit real content while unlocked. Never count LockActivity,
@@ -270,6 +275,8 @@ class GuardService : Service() {
         val prefs = TvGuardApp.instance.prefs
         val usage = if (UsageAccessHelper.hasUsageAccess(this)) "Usage✓" else "Usage✗"
         val text = when {
+            prefs.isFullUnlockActive() ->
+                "彻底解锁 ${prefs.remainingFullUnlockMs() / 60000}分 · $usage"
             prefs.quizPending -> "答题中：$usage"
             prefs.isInUnlockWindow() ->
                 "解锁中 ${prefs.remainingUnlockMs() / 60000}分 · $usage"
@@ -286,7 +293,7 @@ class GuardService : Service() {
         private const val NOTIF_ID = 1001
         private const val NOTIF_LOCK_ID = 1002
         const val ACTION_SHOW_LOCK = "com.family.tvguard.action.SHOW_LOCK"
-        const val VERSION_NAME = "1.0.0-m2.12"
+        const val VERSION_NAME = "1.0.0-m2.13"
 
         @Volatile
         var instance: GuardService? = null

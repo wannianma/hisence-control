@@ -12,7 +12,7 @@ import java.util.Locale
 import java.util.TimeZone
 
 /**
- * Persisted guard state. M1 SharedPreferences + M2 quiz fields.
+ * Persisted guard state. M1 SharedPreferences + M2 quiz fields + fullUnlock.
  */
 class GuardPrefs(context: Context) {
     private val sp: SharedPreferences =
@@ -25,6 +25,11 @@ class GuardPrefs(context: Context) {
     var unlockUntilEpochMs: Long
         get() = sp.getLong(KEY_UNLOCK_UNTIL, 0L)
         set(v) = sp.edit().putLong(KEY_UNLOCK_UNTIL, v).apply()
+
+    /** Parent "thorough unlock": wall-clock window with no quiz / no quota re-lock. */
+    var fullUnlockUntilEpochMs: Long
+        get() = sp.getLong(KEY_FULL_UNLOCK_UNTIL, 0L)
+        set(v) = sp.edit().putLong(KEY_FULL_UNLOCK_UNTIL, v).apply()
 
     var dailyUsedMs: Long
         get() {
@@ -98,9 +103,14 @@ class GuardPrefs(context: Context) {
         )
     }
 
+    fun isFullUnlockActive(now: Long = System.currentTimeMillis()): Boolean =
+        fullUnlockUntilEpochMs > now
+
     fun isEffectivelyLocked(now: Long = System.currentTimeMillis()): Boolean {
         rolloverIfNeeded(now)
-        // Quiz lock always wins (even inside parent unlock window).
+        // Thorough parent unlock: ignore quiz + daily quota until wall window ends.
+        if (isFullUnlockActive(now)) return false
+        // Quiz lock always wins (even inside normal parent unlock window).
         if (quizPending) return true
         // Active parent unlock window overrides daily quota until it expires.
         if (unlockUntilEpochMs > now) return false
@@ -109,13 +119,14 @@ class GuardPrefs(context: Context) {
     }
 
     fun isInUnlockWindow(now: Long = System.currentTimeMillis()): Boolean =
-        unlockUntilEpochMs > now
+        unlockUntilEpochMs > now || isFullUnlockActive(now)
 
     fun lockNow() {
         flushSessionUsage()
         sp.edit()
             .putBoolean(KEY_LOCKED, true)
             .putLong(KEY_UNLOCK_UNTIL, 0L)
+            .putLong(KEY_FULL_UNLOCK_UNTIL, 0L)
             .putLong(KEY_SESSION_START, 0L)
             .putBoolean(KEY_QUIZ_PENDING, false)
             .putLong(KEY_MS_SINCE_QUIZ, 0L)
@@ -127,11 +138,31 @@ class GuardPrefs(context: Context) {
         val now = System.currentTimeMillis()
         rolloverIfNeeded(now)
         unlockUntilEpochMs = now + (hours * 3600_000).toLong()
+        // Normal unlock is not thorough — clear any leftover fullUnlock session.
+        fullUnlockUntilEpochMs = 0L
         locked = false
         sessionStartEpochMs = now
         quizPending = false
         msSinceLastQuiz = 0L
         currentQuizId = ""
+    }
+
+    /**
+     * Parent thorough unlock: wall-clock [hours] window.
+     * No 10-min quiz, daily quota does not re-lock, LockActivity stays dismissed.
+     */
+    fun fullUnlockHours(hours: Double = DEFAULT_UNLOCK_HOURS) {
+        val now = System.currentTimeMillis()
+        rolloverIfNeeded(now)
+        val until = now + (hours * 3600_000).toLong()
+        unlockUntilEpochMs = until
+        fullUnlockUntilEpochMs = until
+        locked = false
+        sessionStartEpochMs = now
+        quizPending = false
+        msSinceLastQuiz = 0L
+        currentQuizId = ""
+        Log.i(TvGuardApp.TAG, "fullUnlock until $until (${hours}h wall)")
     }
 
     fun cancelUnlock() {
@@ -150,7 +181,8 @@ class GuardPrefs(context: Context) {
             // Cap a single flush so a stuck clock / long sleep cannot dump hours at once.
             val credited = delta.coerceAtMost(WATCHER_INTERVAL_MS * 8)
             dailyUsedMs = dailyUsedMs + credited
-            if (!quizPending && isInUnlockWindow(now)) {
+            // During fullUnlock, do not accumulate toward the next quiz.
+            if (!quizPending && isInUnlockWindow(now) && !isFullUnlockActive(now)) {
                 msSinceLastQuiz = msSinceLastQuiz + credited
             }
             sessionStartEpochMs = now
@@ -182,6 +214,15 @@ class GuardPrefs(context: Context) {
 
     /** Call while unlocked: if watch since last quiz >= interval, require quiz. */
     fun checkAndTriggerQuiz(now: Long = System.currentTimeMillis()): Boolean {
+        if (isFullUnlockActive(now)) {
+            // Suppress quiz entirely during thorough unlock.
+            if (quizPending) {
+                quizPending = false
+                currentQuizId = ""
+                msSinceLastQuiz = 0L
+            }
+            return false
+        }
         if (quizPending) return true
         if (!isInUnlockWindow(now)) return false
         flushSessionUsage(now)
@@ -230,6 +271,9 @@ class GuardPrefs(context: Context) {
 
     fun remainingUnlockMs(now: Long = System.currentTimeMillis()): Long =
         (unlockUntilEpochMs - now).coerceAtLeast(0L)
+
+    fun remainingFullUnlockMs(now: Long = System.currentTimeMillis()): Long =
+        (fullUnlockUntilEpochMs - now).coerceAtLeast(0L)
 
     fun remainingQuotaMs(now: Long = System.currentTimeMillis()): Long {
         rolloverIfNeeded(now)
@@ -283,6 +327,7 @@ class GuardPrefs(context: Context) {
         private const val KEY_PREFS_SCHEMA = "prefsSchema"
         private const val KEY_LOCKED = "locked"
         private const val KEY_UNLOCK_UNTIL = "unlockUntilEpochMs"
+        private const val KEY_FULL_UNLOCK_UNTIL = "fullUnlockUntilEpochMs"
         private const val KEY_DAILY_USED = "dailyUsedMs"
         private const val KEY_DAILY_DATE = "dailyDate"
         private const val KEY_TOKEN = "parentToken"
