@@ -60,12 +60,13 @@ class MainActivity : AppCompatActivity() {
         val ip = IpUtils.localIpv4() ?: "?"
         val usage = UsageAccessHelper.statusLabel(this)
         findViewById<TextView>(R.id.info).text = buildString {
-            appendLine("版本: ${GuardService.VERSION_NAME} (14)")
+            appendLine("版本: ${GuardService.VERSION_NAME} (16)")
             appendLine("IP: $ip:${GuardPrefs.HTTP_PORT}")
             appendLine("管理页: http://$ip:${GuardPrefs.HTTP_PORT}/admin/")
             appendLine("Token: ${prefs.parentToken}")
             appendLine("锁定: ${prefs.isEffectivelyLocked()}")
-            appendLine("今日已用: ${prefs.dailyUsedMs / 60000} 分钟")
+            appendLine("今日已用: ${prefs.dailyUsedMs / 60000} / ${prefs.dailyQuotaMinutes} 分钟")
+            appendLine("答题间隔: ${prefs.quizIntervalMinutes} 分钟")
             appendLine("使用情况访问: $usage")
             appendLine("前台检测: ${if (UsageAccessHelper.hasUsageAccess(this@MainActivity)) "UsageStats" else "启发式回退"}")
             appendLine()

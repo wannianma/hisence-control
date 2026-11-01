@@ -54,7 +54,7 @@ class GuardPrefs(context: Context) {
         get() = sp.getLong(KEY_SESSION_START, 0L)
         set(v) = sp.edit().putLong(KEY_SESSION_START, v).apply()
 
-    /** True when a 10-min quiz must be answered before watching continues. */
+    /** True when a quiz must be answered before watching continues. */
     var quizPending: Boolean
         get() = sp.getBoolean(KEY_QUIZ_PENDING, false)
         set(v) = sp.edit().putBoolean(KEY_QUIZ_PENDING, v).apply()
@@ -67,6 +67,28 @@ class GuardPrefs(context: Context) {
     var currentQuizId: String
         get() = sp.getString(KEY_QUIZ_ID, "") ?: ""
         set(v) = sp.edit().putString(KEY_QUIZ_ID, v).apply()
+
+    /** Minutes of watching between quizzes (default 10). */
+    var quizIntervalMinutes: Int
+        get() = sp.getInt(KEY_QUIZ_INTERVAL_MIN, DEFAULT_QUIZ_INTERVAL_MINUTES).coerceIn(1, 180)
+        set(v) = sp.edit().putInt(KEY_QUIZ_INTERVAL_MIN, v.coerceIn(1, 180)).apply()
+
+    /** Daily watch quota in minutes (the "2 hours" limit; default 120). */
+    var dailyQuotaMinutes: Int
+        get() = sp.getInt(KEY_DAILY_QUOTA_MIN, DEFAULT_DAILY_QUOTA_MINUTES).coerceIn(1, 12 * 60)
+        set(v) = sp.edit().putInt(KEY_DAILY_QUOTA_MIN, v.coerceIn(1, 12 * 60)).apply()
+
+    /** Default length (hours) for normal unlock & full unlock buttons/API when hours omitted. */
+    var defaultUnlockHours: Double
+        get() = sp.getFloat(KEY_DEFAULT_UNLOCK_HOURS, DEFAULT_UNLOCK_HOURS.toFloat()).toDouble()
+            .coerceIn(0.25, 24.0)
+        set(v) = sp.edit().putFloat(KEY_DEFAULT_UNLOCK_HOURS, v.coerceIn(0.25, 24.0).toFloat()).apply()
+
+    val quizIntervalMs: Long
+        get() = quizIntervalMinutes * 60_000L
+
+    val dailyQuotaMs: Long
+        get() = dailyQuotaMinutes * 60_000L
 
     fun ensureParentToken(): String {
         migratePrefsSchemaIfNeeded()
@@ -114,7 +136,7 @@ class GuardPrefs(context: Context) {
         if (quizPending) return true
         // Active parent unlock window overrides daily quota until it expires.
         if (unlockUntilEpochMs > now) return false
-        if (dailyUsedMs >= DAILY_QUOTA_MS) return true
+        if (dailyUsedMs >= dailyQuotaMs) return true
         return locked
     }
 
@@ -149,9 +171,9 @@ class GuardPrefs(context: Context) {
 
     /**
      * Parent thorough unlock: wall-clock [hours] window.
-     * No 10-min quiz, daily quota does not re-lock, LockActivity stays dismissed.
+     * No quiz, daily quota does not re-lock, LockActivity stays dismissed.
      */
-    fun fullUnlockHours(hours: Double = DEFAULT_UNLOCK_HOURS) {
+    fun fullUnlockHours(hours: Double = defaultUnlockHours) {
         val now = System.currentTimeMillis()
         rolloverIfNeeded(now)
         val until = now + (hours * 3600_000).toLong()
@@ -226,7 +248,7 @@ class GuardPrefs(context: Context) {
         if (quizPending) return true
         if (!isInUnlockWindow(now)) return false
         flushSessionUsage(now)
-        if (msSinceLastQuiz >= QUIZ_INTERVAL_MS) {
+        if (msSinceLastQuiz >= quizIntervalMs) {
             quizPending = true
             sessionStartEpochMs = 0L
             if (currentQuizId.isBlank()) {
@@ -256,8 +278,8 @@ class GuardPrefs(context: Context) {
             currentQuizId = ""
             locked = false
             if (!isInUnlockWindow(now)) {
-                val remainingQuota = (DAILY_QUOTA_MS - dailyUsedMs).coerceAtLeast(0L)
-                unlockUntilEpochMs = now + maxOf(remainingQuota, QUIZ_INTERVAL_MS)
+                val remainingQuota = (dailyQuotaMs - dailyUsedMs).coerceAtLeast(0L)
+                unlockUntilEpochMs = now + maxOf(remainingQuota, quizIntervalMs)
             }
             sessionStartEpochMs = now
             Log.i(TvGuardApp.TAG, "Quiz ${q.id} correct; unlocked until ${unlockUntilEpochMs}")
@@ -279,7 +301,7 @@ class GuardPrefs(context: Context) {
         rolloverIfNeeded(now)
         clampDailyUsedToElapsedDay(now)
         // Do not flush here — status polls / quota checks must not invent watch time.
-        return (DAILY_QUOTA_MS - dailyUsedMs).coerceAtLeast(0L)
+        return (dailyQuotaMs - dailyUsedMs).coerceAtLeast(0L)
     }
 
     /** Snapshot used today without advancing the session clock. */
@@ -287,6 +309,21 @@ class GuardPrefs(context: Context) {
         rolloverIfNeeded(now)
         clampDailyUsedToElapsedDay(now)
         return dailyUsedMs
+    }
+
+    /**
+     * Apply parent config. Null fields are left unchanged.
+     * Returns the effective values after write.
+     */
+    fun updateConfig(
+        quizIntervalMinutes: Int? = null,
+        dailyQuotaMinutes: Int? = null,
+        defaultUnlockHours: Double? = null,
+    ): Triple<Int, Int, Double> {
+        quizIntervalMinutes?.let { this.quizIntervalMinutes = it }
+        dailyQuotaMinutes?.let { this.dailyQuotaMinutes = it }
+        defaultUnlockHours?.let { this.defaultUnlockHours = it }
+        return Triple(this.quizIntervalMinutes, this.dailyQuotaMinutes, this.defaultUnlockHours)
     }
 
     fun verifyPin(pin: String): Boolean {
@@ -316,12 +353,15 @@ class GuardPrefs(context: Context) {
     companion object {
         const val PREFS = "tvguard_prefs"
         const val HTTP_PORT = 8787
-        const val DAILY_QUOTA_MS = 2L * 3600_000
+        const val DEFAULT_QUIZ_INTERVAL_MINUTES = 10
+        const val DEFAULT_DAILY_QUOTA_MINUTES = 120
         const val DEFAULT_UNLOCK_HOURS = 2.0
+        /** Fallback defaults (pre-config); runtime uses instance quizIntervalMs / dailyQuotaMs. */
+        const val DAILY_QUOTA_MS = DEFAULT_DAILY_QUOTA_MINUTES * 60_000L
+        const val QUIZ_INTERVAL_MS = DEFAULT_QUIZ_INTERVAL_MINUTES * 60_000L
         const val DEFAULT_PIN = "000000"
         const val BOOT_GRACE_MS = 20_000L
         const val WATCHER_INTERVAL_MS = 1_500L
-        const val QUIZ_INTERVAL_MS = 10L * 60_000 // 10 minutes watching
 
         const val PREFS_SCHEMA = 2
         private const val KEY_PREFS_SCHEMA = "prefsSchema"
@@ -336,6 +376,9 @@ class GuardPrefs(context: Context) {
         private const val KEY_QUIZ_PENDING = "quizPending"
         private const val KEY_MS_SINCE_QUIZ = "msSinceLastQuiz"
         private const val KEY_QUIZ_ID = "currentQuizId"
+        private const val KEY_QUIZ_INTERVAL_MIN = "quizIntervalMinutes"
+        private const val KEY_DAILY_QUOTA_MIN = "dailyQuotaMinutes"
+        private const val KEY_DEFAULT_UNLOCK_HOURS = "defaultUnlockHours"
 
         fun generateToken(): String {
             val bytes = ByteArray(16)

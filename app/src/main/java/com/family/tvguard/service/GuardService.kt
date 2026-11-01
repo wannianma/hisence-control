@@ -293,7 +293,7 @@ class GuardService : Service() {
         private const val NOTIF_ID = 1001
         private const val NOTIF_LOCK_ID = 1002
         const val ACTION_SHOW_LOCK = "com.family.tvguard.action.SHOW_LOCK"
-        const val VERSION_NAME = "1.0.0-m2.13"
+        const val VERSION_NAME = "1.0.0-m2.14"
 
         @Volatile
         var instance: GuardService? = null

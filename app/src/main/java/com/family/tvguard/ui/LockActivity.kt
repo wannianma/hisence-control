@@ -75,8 +75,9 @@ class LockActivity : AppCompatActivity() {
         btnPin.setOnClickListener {
             val pin = findViewById<EditText>(R.id.pinInput).text?.toString().orEmpty()
             if (prefs.verifyPin(pin)) {
-                prefs.unlockHours(GuardPrefs.DEFAULT_UNLOCK_HOURS)
-                Toast.makeText(this, "已解锁 ${GuardPrefs.DEFAULT_UNLOCK_HOURS.toInt()} 小时", Toast.LENGTH_SHORT).show()
+                val hours = prefs.defaultUnlockHours
+                prefs.unlockHours(hours)
+                Toast.makeText(this, "已解锁 ${hours} 小时", Toast.LENGTH_SHORT).show()
                 finish()
             } else {
                 Toast.makeText(this, "PIN 错误", Toast.LENGTH_SHORT).show()
@@ -263,13 +264,14 @@ class LockActivity : AppCompatActivity() {
 
     private fun updateStatusOnly() {
         val usedMin = prefs.dailyUsedMs / 60_000.0
-        val quotaMin = GuardPrefs.DAILY_QUOTA_MS / 60_000.0
+        val quotaMin = prefs.dailyQuotaMinutes.toDouble()
         val quizMin = prefs.msSinceLastQuiz / 60_000.0
+        val intervalMin = prefs.quizIntervalMinutes
         findViewById<TextView>(R.id.statusLine).text =
             if (prefs.quizPending) {
                 String.format("今日已看 %.0f / %.0f 分钟 · 答题后继续", usedMin, quotaMin)
             } else {
-                String.format("今日已看 %.0f / %.0f 分钟 · 距下题约 %.0f/10 分钟", usedMin, quotaMin, quizMin)
+                String.format("今日已看 %.0f / %.0f 分钟 · 距下题约 %.0f/%d 分钟", usedMin, quotaMin, quizMin, intervalMin)
             }
     }
 
