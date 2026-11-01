@@ -93,6 +93,9 @@
                 <action android:name="android.intent.action.ACTION_BOOT_IPO" />
                 <action android:name="android.intent.action.ACTION_PREBOOT_IPO" />
                 <action android:name="com.mediatek.intent.action.ACTION_BOOT_IPO" />
+                <!-- Fires on every IPO standby, so the 2nd cycle can plant a wake alarm. -->
+                <action android:name="android.intent.action.ACTION_SHUTDOWN_IPO" />
+                <action android:name="android.intent.action.ACTION_SHUTDOWN" />
             </intent-filter>
         </receiver>
 
