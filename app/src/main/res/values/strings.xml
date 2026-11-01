@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">家庭电视锁</string>
+    <string name="lock_title">休息一下，答对才能继续</string>
+    <string name="lock_hint">请用手机打开同一 WiFi 下的管理页解锁</string>
+    <string name="lock_pin_hint">或输入家长 PIN</string>
+    <string name="btn_unlock_pin">家长 PIN 解锁</string>
+    <string name="channel_guard">电视守护</string>
+    <string name="notif_guard_running">电视锁守护运行中</string>
+</resources>

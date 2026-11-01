@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark"
+    android:keepScreenOn="true"
+    android:orientation="vertical"
+    android:paddingLeft="40dp"
+    android:paddingRight="40dp"
+    android:paddingTop="28dp"
+    android:paddingBottom="24dp"
+    android:descendantFocusability="afterDescendants">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:focusable="false">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:focusable="false">
+
+            <TextView
+                android:id="@+id/title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:focusable="false"
+                android:text="@string/lock_title"
+                android:textColor="@color/text_primary"
+                android:textSize="30sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/subtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:focusable="false"
+                android:text="@string/lock_hint"
+                android:textColor="@color/text_secondary"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/statusLine"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:focusable="false"
+            android:gravity="end"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/adminUrl"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:focusable="false"
+        android:textColor="@color/accent"
+        android:textSize="16sp"
+        android:textIsSelectable="false" />
+
+    <LinearLayout
+        android:id="@+id/quizPanel"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="16dp"
+        android:orientation="vertical"
+        android:visibility="gone"
+        android:focusable="false"
+        android:descendantFocusability="afterDescendants">
+
+        <TextView
+            android:id="@+id/quizPrompt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:focusable="false"
+            android:gravity="center"
+            android:minHeight="72dp"
+            android:padding="12dp"
+            android:background="#1AFFFFFF"
+            android:textColor="@color/text_primary"
+            android:textSize="28sp"
+            android:textStyle="bold" />
+
+        <GridLayout
+            android:id="@+id/choiceGrid"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:layout_marginTop="16dp"
+            android:columnCount="2"
+            android:rowCount="2"
+            android:alignmentMode="alignBounds"
+            android:useDefaultMargins="false"
+            android:focusable="false">
+
+            <Button
+                android:id="@+id/btnChoice0"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_row="0"
+                android:layout_column="0"
+                android:layout_rowWeight="1"
+                android:layout_columnWeight="1"
+                android:layout_margin="10dp"
+                android:background="@drawable/bg_choice"
+                android:backgroundTint="@null"
+                android:stateListAnimator="@null"
+                android:defaultFocusHighlightEnabled="false"
+                android:elevation="0dp"
+                android:textColor="@drawable/bg_choice_text"
+                android:textSize="26sp"
+                android:textAllCaps="false"
+                android:gravity="center"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:clickable="true"
+                android:nextFocusRight="@id/btnChoice1"
+                android:nextFocusDown="@id/btnChoice2"
+                android:nextFocusUp="@id/btnChoice0"
+                android:nextFocusLeft="@id/btnChoice0" />
+
+            <Button
+                android:id="@+id/btnChoice1"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_row="0"
+                android:layout_column="1"
+                android:layout_rowWeight="1"
+                android:layout_columnWeight="1"
+                android:layout_margin="10dp"
+                android:background="@drawable/bg_choice"
+                android:backgroundTint="@null"
+                android:stateListAnimator="@null"
+                android:defaultFocusHighlightEnabled="false"
+                android:elevation="0dp"
+                android:textColor="@drawable/bg_choice_text"
+                android:textSize="26sp"
+                android:textAllCaps="false"
+                android:gravity="center"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:clickable="true"
+                android:nextFocusLeft="@id/btnChoice0"
+                android:nextFocusDown="@id/btnChoice3"
+                android:nextFocusUp="@id/btnChoice1"
+                android:nextFocusRight="@id/btnChoice1" />
+
+            <Button
+                android:id="@+id/btnChoice2"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_row="1"
+                android:layout_column="0"
+                android:layout_rowWeight="1"
+                android:layout_columnWeight="1"
+                android:layout_margin="10dp"
+                android:background="@drawable/bg_choice"
+                android:backgroundTint="@null"
+                android:stateListAnimator="@null"
+                android:defaultFocusHighlightEnabled="false"
+                android:elevation="0dp"
+                android:textColor="@drawable/bg_choice_text"
+                android:textSize="26sp"
+                android:textAllCaps="false"
+                android:gravity="center"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:clickable="true"
+                android:nextFocusUp="@id/btnChoice0"
+                android:nextFocusRight="@id/btnChoice3"
+                android:nextFocusDown="@id/btnPin"
+                android:nextFocusLeft="@id/btnChoice2" />
+
+            <Button
+                android:id="@+id/btnChoice3"
+                android:layout_width="0dp"
+                android:layout_height="0dp"
+                android:layout_row="1"
+                android:layout_column="1"
+                android:layout_rowWeight="1"
+                android:layout_columnWeight="1"
+                android:layout_margin="10dp"
+                android:background="@drawable/bg_choice"
+                android:backgroundTint="@null"
+                android:stateListAnimator="@null"
+                android:defaultFocusHighlightEnabled="false"
+                android:elevation="0dp"
+                android:textColor="@drawable/bg_choice_text"
+                android:textSize="26sp"
+                android:textAllCaps="false"
+                android:gravity="center"
+                android:focusable="true"
+                android:focusableInTouchMode="true"
+                android:clickable="true"
+                android:nextFocusUp="@id/btnChoice1"
+                android:nextFocusLeft="@id/btnChoice2"
+                android:nextFocusDown="@id/btnPin"
+                android:nextFocusRight="@id/btnChoice3" />
+        </GridLayout>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/quizPlaceholder"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        android:focusable="false" />
+
+    <LinearLayout
+        android:id="@+id/pinRow"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:focusable="false">
+
+        <EditText
+            android:id="@+id/pinInput"
+            android:layout_width="180dp"
+            android:layout_height="56dp"
+            android:hint="@string/lock_pin_hint"
+            android:inputType="numberPassword"
+            android:maxLength="6"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:nextFocusUp="@id/btnChoice2"
+            android:nextFocusRight="@id/btnPin"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_secondary"
+            android:importantForAutofill="no" />
+
+        <Button
+            android:id="@+id/btnPin"
+            android:layout_width="wrap_content"
+            android:layout_height="56dp"
+            android:layout_marginStart="12dp"
+            android:minWidth="140dp"
+            android:background="@drawable/bg_pin_btn"
+            android:backgroundTint="@null"
+            android:stateListAnimator="@null"
+            android:defaultFocusHighlightEnabled="false"
+            android:textColor="#FFFFFF"
+            android:textSize="18sp"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:nextFocusUp="@id/btnChoice3"
+            android:nextFocusLeft="@id/pinInput"
+            android:text="@string/btn_unlock_pin" />
+
+        <TextView
+            android:id="@+id/tokenHint"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="16dp"
+            android:focusable="false"
+            android:textColor="#66FFFFFF"
+            android:textSize="12sp"
+            android:fontFamily="monospace" />
+    </LinearLayout>
+</LinearLayout>

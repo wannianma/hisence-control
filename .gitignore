@@ -1,0 +1,14 @@
+/.gradle/
+/build/
+/app/build/
+/local.properties
+*.iml
+/.idea/
+.DS_Store
+*.apk
+
+tvguard-src.tgz
+
+tvguard_focus.png
+
+*.tgz
