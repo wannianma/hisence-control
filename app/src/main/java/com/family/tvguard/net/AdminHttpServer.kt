@@ -4,6 +4,7 @@ import android.util.Log
 import com.family.tvguard.TvGuardApp
 import com.family.tvguard.data.GuardPrefs
 import com.family.tvguard.service.GuardService
+import com.family.tvguard.service.KeepAliveScheduler
 import com.family.tvguard.util.UsageAccessHelper
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONObject
@@ -89,7 +90,7 @@ class AdminHttpServer(
             .put("remainingQuotaMs", prefs.remainingQuotaMs(now))
             .put("port", GuardPrefs.HTTP_PORT)
             .put("version", GuardService.VERSION_NAME)
-            .put("versionCode", 16)
+            .put("versionCode", GuardService.VERSION_CODE)
             .put("quizPending", prefs.quizPending)
             .put("msSinceLastQuiz", prefs.msSinceLastQuiz)
             .put("quizIntervalMs", prefs.quizIntervalMs)
@@ -103,7 +104,7 @@ class AdminHttpServer(
             .put("guardServiceRunning", svc != null)
             .put("deviceOwner", false)
             .put("deviceOwnerNote", "Skipped: requires factory-reset / dpm; unsafe for family Hisense TV")
-            .put("keepAliveIntervalMs", 5L * 60_000)
+            .put("keepAliveIntervalMs", KeepAliveScheduler.INTERVAL_MS)
         return jsonOk(o)
     }
 
@@ -257,7 +258,7 @@ class AdminHttpServer(
         .put("dailyQuotaMs", prefs.dailyQuotaMs)
         .put("defaultUnlockHours", prefs.defaultUnlockHours)
         .put("version", GuardService.VERSION_NAME)
-        .put("versionCode", 16)
+        .put("versionCode", GuardService.VERSION_CODE)
 
     private fun forceQuiz(session: IHTTPSession): Response {
         if (!authorized(session)) return unauthorized(session)
@@ -375,7 +376,7 @@ class AdminHttpServer(
 </head>
 <body>
   <h1>家庭电视锁</h1>
-  <div class="sub">同一 WiFi · 家长控制 · M2.14 · Usage Access 建议开启</div>
+  <div class="sub">同一 WiFi · 家长控制 · ${GuardService.VERSION_NAME} · Usage Access 建议开启</div>
   <div class="card">
     <div class="status">${when {
         st.locked -> "已锁定"

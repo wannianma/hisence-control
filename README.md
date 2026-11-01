@@ -1,8 +1,8 @@
-# 家庭电视锁 TvGuard M2.11
+# 家庭电视锁 TvGuard M2.16
 
 `com.family.tvguard` — Hisense VIDAA / Android TV 家长锁屏 + 局域网控制 + 英语答题。
 
-当前：`versionCode 13` / `1.0.0-m2.11`
+当前：`versionCode 18` / `1.0.0-m2.16`
 
 ## 构建
 
@@ -58,11 +58,23 @@ adb shell appops get com.family.tvguard GET_USAGE_STATS
 
 未授权时自动回退 `getRunningTasks` / 前台进程启发式，**不会**因此无法锁屏。
 
-## 开机保活
+## 开机保活（m2.16）
 
-- `BootReceiver`：`BOOT_COMPLETED` / `LOCKED_BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` / `QUICKBOOT_POWERON` / `USER_PRESENT`
-- `KeepAliveReceiver` + `AlarmManager` 约每 5 分钟唤醒 `GuardService`（应用内 sidekick，非第二 APK）
-- 海信/VIDAA 仍可能杀非白名单进程：**请在「启动管理」白名单「家庭电视锁」**
+海信 M7332 的电源键经常是待机 / MediaTek IPO，不一定发冷启动 `BOOT_COMPLETED`。本版不使用 Device Owner，尽量在应用内把守护拉起来：
+
+- `BootReceiver`（`directBootAware`）：`BOOT_COMPLETED`、`LOCKED_BOOT_COMPLETED`、`USER_UNLOCKED`、`USER_PRESENT`、`MY_PACKAGE_REPLACED`、`QUICKBOOT_POWERON`，以及 MTK `ACTION_BOOT_IPO` / `ACTION_PREBOOT_IPO`
+- 用户未解锁时不读 SharedPreferences（避免直接启动崩溃），等解锁或闹钟再拉起前台 `GuardService`
+- 进程活着时动态监听 `SCREEN_ON`、屏保结束、IPO 关机前再挂一次非唤醒闹钟（不会把待机中的电视自己打开）
+- `AlarmManager` 心跳约 30 秒；进程刚被杀掉或开机失败时 8 秒再试
+- 持久化 `JobScheduler`：一次性任务（约 1 分钟内）+ 15 分钟周期。重启后由系统恢复，不依赖应用自己收到开机广播
+- 锁定状态下会拉起 `LockActivity`，并用系统闹钟 / 全屏通知再兜一层。解锁窗口、彻底解锁、答题、每日配额逻辑不变
+- 使用情况访问未开时**仍然启动守护**，前台检测回退到 `runningTasks`；主界面会提示去开权限
+
+海信/VIDAA 仍可能杀掉未白名单进程。若开机后还是能直接用别的应用：
+
+**设置 → 应用 → 启动管理 → 允许「家庭电视锁」自启动和后台运行。**
+
+不要在系统里「强行停止」本应用，否则 Android 会一直忽略开机广播，直到手动再打开一次。
 
 ## Device Owner（未启用）
 
