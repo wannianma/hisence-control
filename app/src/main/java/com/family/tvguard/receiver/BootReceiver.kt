@@ -6,10 +6,12 @@ import android.content.Intent
 import android.util.Log
 import com.family.tvguard.TvGuardApp
 import com.family.tvguard.service.GuardService
+import com.family.tvguard.service.KeepAliveScheduler
 
 /**
- * Best-effort boot start. Hisense/VIDAA often kills non-whitelisted apps —
- * document: add 家庭电视锁 to 启动管理 whitelist.
+ * Best-effort boot / package-replace start.
+ * Hisense/VIDAA often kills non-whitelisted apps — add 家庭电视锁 to 启动管理 whitelist.
+ * Also schedules KeepAlive alarms as a soft sidekick (not a second APK).
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -19,8 +21,13 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
             Intent.ACTION_MY_PACKAGE_REPLACED,
-            "android.intent.action.QUICKBOOT_POWERON" -> {
-                GuardService.start(context.applicationContext)
+            Intent.ACTION_USER_PRESENT,
+            "android.intent.action.QUICKBOOT_POWERON",
+            "com.htc.intent.action.QUICKBOOT_POWERON",
+            "android.intent.action.REBOOT" -> {
+                val appCtx = context.applicationContext
+                GuardService.start(appCtx)
+                KeepAliveScheduler.schedule(appCtx)
             }
         }
     }

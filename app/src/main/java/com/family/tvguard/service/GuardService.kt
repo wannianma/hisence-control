@@ -21,9 +21,10 @@ import com.family.tvguard.data.GuardPrefs
 import com.family.tvguard.net.AdminHttpServer
 import com.family.tvguard.ui.LockActivity
 import com.family.tvguard.ui.MainActivity
+import com.family.tvguard.util.UsageAccessHelper
 
 /**
- * Foreground service: LAN HTTP + TopActivityWatcher + M2 quiz timer.
+ * Foreground service: LAN HTTP + TopActivityWatcher + M2 quiz timer + keepalive schedule.
  */
 class GuardService : Service() {
     private val handler = Handler(Looper.getMainLooper())
@@ -31,6 +32,10 @@ class GuardService : Service() {
     private var watcher: TopActivityWatcher? = null
     private var startedElapsed: Long = 0L
     private var relaunchAttempts = 0
+    @Volatile var lastTopSource: String = "none"
+        private set
+    @Volatile var lastTopPackage: String? = null
+        private set
 
     private val tick = object : Runnable {
         override fun run() {
@@ -45,6 +50,7 @@ class GuardService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         startedElapsed = SystemClock.elapsedRealtime()
         createChannel()
         startForeground(NOTIF_ID, buildNotification("守护运行中"))
@@ -54,9 +60,7 @@ class GuardService : Service() {
             http = AdminHttpServer(prefs) { reason ->
                 Log.i(TvGuardApp.TAG, "HTTP state change: $reason")
                 handler.post {
-                    // Admin lock/quiz must always push LockActivity over other apps
                     enforceLockIfNeeded(force = true)
-                    // Retry a few times — Hisense sometimes drops the first startActivity
                     handler.postDelayed({ enforceLockIfNeeded(force = true) }, 400)
                     handler.postDelayed({ enforceLockIfNeeded(force = true) }, 1200)
                     handler.postDelayed({ enforceLockIfNeeded(force = true) }, 2500)
@@ -68,14 +72,19 @@ class GuardService : Service() {
             Log.e(TvGuardApp.TAG, "HTTP start failed: ${e.message}", e)
         }
         watcher = TopActivityWatcher(this)
+        KeepAliveScheduler.schedule(this)
         handler.post(tick)
-        Log.i(TvGuardApp.TAG, "GuardService created")
+        Log.i(
+            TvGuardApp.TAG,
+            "GuardService created usageAccess=${UsageAccessHelper.hasUsageAccess(this)} mode=${watcher?.detectionMode()}"
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_SHOW_LOCK) {
             handler.post { enforceLockIfNeeded(force = true) }
         }
+        KeepAliveScheduler.schedule(this)
         return START_STICKY
     }
 
@@ -84,7 +93,9 @@ class GuardService : Service() {
         try { http?.stop() } catch (_: Exception) {}
         http = null
         watcher = null
-        Log.w(TvGuardApp.TAG, "GuardService destroyed")
+        if (instance === this) instance = null
+        Log.w(TvGuardApp.TAG, "GuardService destroyed — scheduling keepalive restart")
+        KeepAliveScheduler.schedule(applicationContext)
         super.onDestroy()
     }
 
@@ -123,9 +134,11 @@ class GuardService : Service() {
             return
         }
 
-        val top = watcher?.topPackageAndActivity()
-        val topPkg = top?.first
-        val topAct = top?.second
+        val info = watcher?.topInfo()
+        val topPkg = info?.packageName
+        val topAct = info?.activityClass
+        lastTopSource = info?.source ?: "none"
+        lastTopPackage = topPkg
         // Require explicit LockActivity class — never treat "same package / unknown activity" as locked UI
         val isLock =
             topPkg == packageName &&
@@ -133,11 +146,10 @@ class GuardService : Service() {
                 topAct.contains("LockActivity")
 
         if (force || !isLock) {
-            Log.i(TvGuardApp.TAG, "bring LockActivity force=$force top=$topPkg/$topAct")
+            Log.i(TvGuardApp.TAG, "bring LockActivity force=$force top=$topPkg/$topAct src=$lastTopSource")
             bringLockToFront()
             relaunchAttempts++
             if (!isLock && relaunchAttempts <= 8) {
-                // Keep nudging until LockActivity is actually top
                 handler.postDelayed({ enforceLockIfNeeded(force = true) }, 800)
             }
         } else {
@@ -164,7 +176,6 @@ class GuardService : Service() {
             @Suppress("DEPRECATION")
             val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
             val tasks = am.getRunningTasks(8)
-            // ONLY promote LockActivity — never MainActivity (same package would steal focus)
             val lockTask = tasks?.firstOrNull {
                 it.topActivity?.className?.contains("LockActivity") == true
             }
@@ -174,7 +185,6 @@ class GuardService : Service() {
         } catch (e: Exception) {
             Log.d(TvGuardApp.TAG, "moveTaskToFront: ${e.message}")
         }
-        // Full-screen heads-up as another way to surface lock on stubborn TV firmwares
         try {
             val nm = getSystemService(NotificationManager::class.java)
             nm.notify(NOTIF_LOCK_ID, buildLockFullscreenNotification())
@@ -241,12 +251,13 @@ class GuardService : Service() {
 
     private fun updateNotification() {
         val prefs = TvGuardApp.instance.prefs
+        val usage = if (UsageAccessHelper.hasUsageAccess(this)) "Usage✓" else "Usage✗"
         val text = when {
-            prefs.quizPending -> "答题中：答对英语题后继续"
+            prefs.quizPending -> "答题中：$usage"
             prefs.isInUnlockWindow() ->
-                "解锁中，剩余 ${prefs.remainingUnlockMs() / 60000} 分钟"
-            prefs.isEffectivelyLocked() -> "已锁屏"
-            else -> "守护中"
+                "解锁中 ${prefs.remainingUnlockMs() / 60000}分 · $usage"
+            prefs.isEffectivelyLocked() -> "已锁屏 · $usage"
+            else -> "守护中 · $usage"
         }
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIF_ID, buildNotification(text))
@@ -258,6 +269,11 @@ class GuardService : Service() {
         private const val NOTIF_ID = 1001
         private const val NOTIF_LOCK_ID = 1002
         const val ACTION_SHOW_LOCK = "com.family.tvguard.action.SHOW_LOCK"
+        const val VERSION_NAME = "1.0.0-m2.11"
+
+        @Volatile
+        var instance: GuardService? = null
+            private set
 
         fun start(context: Context) {
             val i = Intent(context, GuardService::class.java)

@@ -3,6 +3,8 @@
 import android.util.Log
 import com.family.tvguard.TvGuardApp
 import com.family.tvguard.data.GuardPrefs
+import com.family.tvguard.service.GuardService
+import com.family.tvguard.util.UsageAccessHelper
 import fi.iki.elonen.NanoHTTPD
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -49,6 +51,9 @@ class AdminHttpServer(
     private fun statusJson(): Response {
         prefs.flushSessionUsage()
         val now = System.currentTimeMillis()
+        val app = TvGuardApp.instance
+        val usageGranted = UsageAccessHelper.hasUsageAccess(app)
+        val svc = GuardService.instance
         val o = JSONObject()
             .put("locked", prefs.isEffectivelyLocked(now))
             .put("prefsLocked", prefs.locked)
@@ -59,11 +64,20 @@ class AdminHttpServer(
             .put("dailyQuotaMs", GuardPrefs.DAILY_QUOTA_MS)
             .put("remainingQuotaMs", prefs.remainingQuotaMs(now))
             .put("port", GuardPrefs.HTTP_PORT)
-            .put("version", "1.0.0-m2.10")
+            .put("version", GuardService.VERSION_NAME)
+            .put("versionCode", 13)
             .put("quizPending", prefs.quizPending)
             .put("msSinceLastQuiz", prefs.msSinceLastQuiz)
             .put("quizIntervalMs", GuardPrefs.QUIZ_INTERVAL_MS)
             .put("currentQuizId", prefs.currentQuizId)
+            .put("usageAccessGranted", usageGranted)
+            .put("topDetectionMode", if (usageGranted) "usage_stats" else "heuristic")
+            .put("lastTopPackage", svc?.lastTopPackage ?: JSONObject.NULL)
+            .put("lastTopSource", svc?.lastTopSource ?: "none")
+            .put("guardServiceRunning", svc != null)
+            .put("deviceOwner", false)
+            .put("deviceOwnerNote", "Skipped: requires factory-reset / dpm; unsafe for family Hisense TV")
+            .put("keepAliveIntervalMs", 5L * 60_000)
         return jsonOk(o)
     }
 
@@ -243,7 +257,7 @@ class AdminHttpServer(
 </head>
 <body>
   <h1>家庭电视锁</h1>
-  <div class="sub">同一 WiFi · 家长控制 · M2 答题</div>
+  <div class="sub">同一 WiFi · 家长控制 · M2.11 · Usage Access 建议开启</div>
   <div class="card">
     <div class="status">${if (st.first) "已锁定" else "解锁中（剩余约 ${st.second} 分钟）"}</div>
     <div class="sub">今日已看 ${st.third} / 120 分钟</div>
