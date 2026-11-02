@@ -17,6 +17,7 @@ import com.family.tvguard.TvGuardApp
 import com.family.tvguard.data.GuardPrefs
 import com.family.tvguard.data.QuizQuestion
 import com.family.tvguard.service.GuardService
+import com.family.tvguard.service.KeepAliveScheduler
 
 /**
  * Fullscreen lock. M2 quiz is D-pad friendly: arrows move focus, OK/Enter selects.
@@ -59,6 +60,14 @@ class LockActivity : AppCompatActivity() {
         // Alarm / full-screen intent can open this while a parent unlock is active.
         // Close before drawing so an in-flight alarm does not flash the lock UI.
         GuardService.start(this)
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        if (!pm.isInteractive) {
+            // Do not pull the panel back on during standby. The next wake alarm reopens us.
+            isResumed = false
+            KeepAliveScheduler.armForStandby(this)
+            finish()
+            return
+        }
         if (!prefs.isEffectivelyLocked()) {
             finish()
             return
@@ -118,6 +127,12 @@ class LockActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         if (!::prefs.isInitialized) {
+            finish()
+            return
+        }
+        val pm = getSystemService(POWER_SERVICE) as android.os.PowerManager
+        if (!pm.isInteractive) {
+            isResumed = false
             finish()
             return
         }
@@ -311,10 +326,18 @@ class LockActivity : AppCompatActivity() {
     }
 
     companion object {
-        /** True while the lock UI is in the foreground. Cleared on pause / process death. */
+        /**
+         * True while the lock UI is in the foreground.
+         * IPO can freeze the process without onPause, so callers must [clearResumed]
+         * on every screen-off. Otherwise the next wake thinks the lock is already up.
+         */
         @Volatile
         var isResumed: Boolean = false
             private set
+
+        fun clearResumed() {
+            isResumed = false
+        }
 
         fun intent(ctx: android.content.Context) =
             android.content.Intent(ctx, LockActivity::class.java).apply {

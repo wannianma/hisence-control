@@ -10,6 +10,7 @@ import androidx.core.content.ContextCompat
 import com.family.tvguard.data.GuardPrefs
 import com.family.tvguard.service.GuardService
 import com.family.tvguard.service.KeepAliveScheduler
+import com.family.tvguard.ui.LockActivity
 import com.family.tvguard.util.UsageAccessHelper
 import com.family.tvguard.util.UserUnlock
 
@@ -86,19 +87,28 @@ class TvGuardApp : Application() {
         if (runtimeReceiver != null) return
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_SCREEN_OFF)
             addAction(Intent.ACTION_USER_PRESENT)
             addAction(Intent.ACTION_USER_UNLOCKED)
             addAction(Intent.ACTION_DREAMING_STOPPED)
+            addAction(Intent.ACTION_SHUTDOWN)
             addAction(ACTION_BOOT_IPO)
             addAction(ACTION_SHUTDOWN_IPO)
         }
         val receiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent?) {
                 val action = intent?.action ?: return
+                val appCtx = context.applicationContext
                 Log.i(TAG, "runtime action=$action")
-                if (action == ACTION_SHUTDOWN_IPO) {
-                    // Suspend imminent. Leave a non-wakeup alarm so wake flushes the guard.
-                    KeepAliveScheduler.scheduleFastRetry(context.applicationContext)
+                if (action == ACTION_SHUTDOWN_IPO ||
+                    action == Intent.ACTION_SHUTDOWN ||
+                    action == Intent.ACTION_SCREEN_OFF
+                ) {
+                    // Every standby, including the second. Drop the stale "lock is showing"
+                    // flag (IPO can freeze the process without onPause) and plant an RTC alarm.
+                    LockActivity.clearResumed()
+                    KeepAliveScheduler.armForStandby(appCtx)
+                    GuardService.start(appCtx, showLock = false)
                     return
                 }
                 val showLock = action == Intent.ACTION_SCREEN_ON ||
@@ -106,7 +116,7 @@ class TvGuardApp : Application() {
                     action == Intent.ACTION_USER_UNLOCKED ||
                     action == Intent.ACTION_DREAMING_STOPPED ||
                     action == ACTION_BOOT_IPO
-                GuardService.start(context.applicationContext, showLock = showLock)
+                GuardService.start(appCtx, showLock = showLock)
             }
         }
         runtimeReceiver = receiver

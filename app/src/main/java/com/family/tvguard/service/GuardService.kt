@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -35,6 +36,11 @@ class GuardService : Service() {
     private var watcher: TopActivityWatcher? = null
     private var relaunchAttempts = 0
     private var lastLockAlarmElapsed = 0L
+    /** False until we have seen the panel on, so the first tick after a wake forces the lock. */
+    private var sawInteractive = false
+    private var standbyArmedWhileOff = false
+    /** Wall clock of the previous tick. A multi-second jump means IPO standby, even if elapsedRealtime froze. */
+    private var lastTickWallMs = 0L
 
     @Volatile var lastTopSource: String = "none"
         private set
@@ -112,7 +118,18 @@ class GuardService : Service() {
             return START_NOT_STICKY
         }
         if (intent?.action == ACTION_SHOW_LOCK) {
-            handler.post { enforceLockIfNeeded(force = true) }
+            handler.post {
+                if (!isPanelInteractive()) {
+                    LockActivity.clearResumed()
+                    sawInteractive = false
+                    standbyArmedWhileOff = true
+                    KeepAliveScheduler.armForStandby(this)
+                } else {
+                    sawInteractive = true
+                    standbyArmedWhileOff = false
+                    enforceLockIfNeeded(force = true)
+                }
+            }
         }
         KeepAliveScheduler.schedule(this)
         return START_STICKY
@@ -166,6 +183,35 @@ class GuardService : Service() {
                 top?.packageName != null &&
                 top.packageName != packageName
 
+        val interactive = isPanelInteractive()
+        if (!interactive) {
+            // Standby / panel off. Do not credit watch time, and do not trust isResumed:
+            // MTK IPO freezes the process without onPause, so the next wake would skip the lock.
+            sawInteractive = false
+            prefs.stopWatchSession()
+            LockActivity.clearResumed()
+            if (!standbyArmedWhileOff) {
+                standbyArmedWhileOff = true
+                KeepAliveScheduler.armForStandby(this)
+                cancelSystemLockAlarm()
+            }
+            KeepAliveScheduler.schedule(this)
+            updateNotification()
+            return
+        }
+        val wallNow = System.currentTimeMillis()
+        val wallGap = if (lastTickWallMs == 0L) 0L else wallNow - lastTickWallMs
+        lastTickWallMs = wallNow
+        // 1.5s ticks. A gap this large means the process was frozen in standby (2nd IPO included).
+        val resumedFromSleep = wallGap > 5_000L
+        val woke = !sawInteractive || resumedFromSleep
+        sawInteractive = true
+        standbyArmedWhileOff = false
+        if (woke) {
+            // Frozen IPO resume: isResumed can still be true even though the launcher is on top.
+            LockActivity.clearResumed()
+        }
+
         if (watchingContent) {
             prefs.ensureWatchSession()
             prefs.flushSessionUsage()
@@ -174,10 +220,14 @@ class GuardService : Service() {
             prefs.stopWatchSession()
         }
 
-        enforceLockIfNeeded(force = false)
+        // woke: 2nd and later IPO resumes must lock even inside the 8s boot grace.
+        enforceLockIfNeeded(force = woke)
         KeepAliveScheduler.schedule(this)
         updateNotification()
     }
+
+    private fun isPanelInteractive(): Boolean =
+        (getSystemService(POWER_SERVICE) as PowerManager).isInteractive
 
     private fun enforceLockIfNeeded(force: Boolean) {
         val prefs = TvGuardApp.instance.prefs
@@ -279,18 +329,19 @@ class GuardService : Service() {
         lastLockAlarmElapsed = now
         try {
             val am = getSystemService(ALARM_SERVICE) as AlarmManager
-            val trigger = now + delayMs.coerceAtLeast(500L)
+            // Wall clock, not elapsed. MTK IPO can freeze elapsedRealtime across standby.
+            val trigger = System.currentTimeMillis() + delayMs.coerceAtLeast(500L)
             val pi = lockActivityPending()
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    am.setExactAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME, trigger, pi)
+                    am.setExactAndAllowWhileIdle(AlarmManager.RTC, trigger, pi)
                 } else {
                     @Suppress("DEPRECATION")
-                    am.setExact(AlarmManager.ELAPSED_REALTIME, trigger, pi)
+                    am.setExact(AlarmManager.RTC, trigger, pi)
                 }
             } catch (se: SecurityException) {
                 Log.w(TvGuardApp.TAG, "lock alarm exact denied: ${se.message}")
-                am.set(AlarmManager.ELAPSED_REALTIME, trigger, pi)
+                am.set(AlarmManager.RTC, trigger, pi)
             }
             Log.i(TvGuardApp.TAG, "lock activity alarm +${delayMs}ms")
         } catch (e: Exception) {
