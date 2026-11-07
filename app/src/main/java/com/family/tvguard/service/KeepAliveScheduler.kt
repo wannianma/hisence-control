@@ -8,10 +8,12 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
 import com.family.tvguard.TvGuardApp
 import com.family.tvguard.receiver.KeepAliveReceiver
+import com.family.tvguard.ui.LockActivity
 
 /**
  * Restart nudges for [GuardService] without Device Owner.
@@ -41,6 +43,8 @@ object KeepAliveScheduler {
     /** Planted on every screen-off. schedule() must not push this one back out. */
     private const val REQ_STANDBY_EXACT = 7108
     private const val REQ_STANDBY_INEXACT = 7109
+    /** System-delivered activity. Hisense drops startActivity from a service. */
+    private const val REQ_LOCK_ACTIVITY = 7110
     private const val PERIODIC_MS = 15L * 60_000L
     private const val RTC_SENTINEL_MS = 20_000L
     private const val STANDBY_QUICK_MS = 2_000L
@@ -50,8 +54,9 @@ object KeepAliveScheduler {
     @Volatile
     private var lastScheduleElapsed = 0L
 
+    /** Wall clock. elapsedRealtime freezes across MediaTek IPO, so it cannot debounce this. */
     @Volatile
-    private var lastStandbyArmElapsed = 0L
+    private var lastStandbyArmWallMs = 0L
 
     fun schedule(context: Context) {
         val now = SystemClock.elapsedRealtime()
@@ -83,17 +88,40 @@ object KeepAliveScheduler {
      * Separate request codes so the live heartbeat cannot postpone this alarm.
      */
     fun armForStandby(context: Context, fromAlarmWhileOff: Boolean = false) {
-        val now = SystemClock.elapsedRealtime()
+        val now = System.currentTimeMillis()
         // Screen-off and the service tick both call this. Don't let the second call
         // replace a 2s alarm with a later one.
-        if (now - lastStandbyArmElapsed < 1_500L) return
-        lastStandbyArmElapsed = now
+        // A firing alarm must always plant the next one: during IPO, elapsedRealtime
+        // does not move, and the old elapsed debounce dropped that follow-up.
+        if (!fromAlarmWhileOff && now - lastStandbyArmWallMs < 1_500L) return
+        lastStandbyArmWallMs = now
         val delay = if (fromAlarmWhileOff) STANDBY_REQUEUE_MS else STANDBY_QUICK_MS
         val appCtx = context.applicationContext
         armRtc(appCtx, delay, REQ_STANDBY_EXACT, exact = true)
         armRtc(appCtx, delay, REQ_STANDBY_INEXACT, exact = false)
         armStandbyJob(appCtx)
         Log.i(TvGuardApp.TAG, "Standby sentinel armed +${delay}ms RTC (non-wakeup)")
+    }
+
+    /**
+     * Raise the lock only when the panel is already on.
+     * Tries startActivity from the caller (boot/alarm receivers still have a
+     * short start exemption on Android 9) and also asks AlarmManager to deliver
+     * the activity, because Hisense ignores startActivity from GuardService.
+     */
+    fun bringLockToFront(context: Context) {
+        val appCtx = context.applicationContext
+        val interactive = (appCtx.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
+        if (!interactive) return
+        val app = appCtx as? TvGuardApp ?: return
+        if (!app.ensurePrefs()) return
+        if (!app.prefs.isEffectivelyLocked()) return
+        try {
+            appCtx.startActivity(LockActivity.intent(appCtx))
+        } catch (e: Exception) {
+            Log.e(TvGuardApp.TAG, "start LockActivity failed: ${e.message}", e)
+        }
+        armLockActivityAlarm(appCtx)
     }
 
     fun cancel(context: Context) {
@@ -155,19 +183,40 @@ object KeepAliveScheduler {
                 am.set(AlarmManager.RTC, trigger, pi)
                 return
             }
+            // setExact, not setExactAndAllowWhileIdle. The idle-exact quota is about
+            // one a minute; refreshing it from the heartbeat was delaying the standby alarm.
+            // Overdue setExact(RTC) flushes when the user turns the panel on, and does not
+            // wake a suspended TV by itself.
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    am.setExactAndAllowWhileIdle(AlarmManager.RTC, trigger, pi)
-                } else {
-                    @Suppress("DEPRECATION")
-                    am.setExact(AlarmManager.RTC, trigger, pi)
-                }
-            } catch (se: SecurityException) {
+                am.setExact(AlarmManager.RTC, trigger, pi)
+            } catch (se: Exception) {
                 Log.w(TvGuardApp.TAG, "RTC exact denied req=$requestCode: ${se.message}")
                 am.set(AlarmManager.RTC, trigger, pi)
             }
         } catch (e: Exception) {
             Log.w(TvGuardApp.TAG, "RTC alarm failed req=$requestCode: ${e.message}")
+        }
+    }
+
+    /** System starts the activity. A service startActivity is dropped on this TV. */
+    private fun armLockActivityAlarm(context: Context) {
+        try {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val trigger = System.currentTimeMillis() + 300L
+            val pi = PendingIntent.getActivity(
+                context,
+                REQ_LOCK_ACTIVITY,
+                LockActivity.intent(context),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            try {
+                am.setExact(AlarmManager.RTC, trigger, pi)
+            } catch (se: Exception) {
+                Log.w(TvGuardApp.TAG, "lock activity exact denied: ${se.message}")
+                am.set(AlarmManager.RTC, trigger, pi)
+            }
+        } catch (e: Exception) {
+            Log.w(TvGuardApp.TAG, "lock activity alarm failed: ${e.message}")
         }
     }
 
@@ -223,7 +272,7 @@ object KeepAliveScheduler {
         }
     }
 
-    private fun armSoonJob(context: Context) {
+    fun armSoonJob(context: Context) {
         try {
             val js = context.getSystemService(Context.JOB_SCHEDULER_SERVICE) as JobScheduler
             val component = ComponentName(context, GuardRestartJob::class.java)

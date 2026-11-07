@@ -79,21 +79,24 @@
             android:exported="true"
             android:enabled="true"
             android:directBootAware="true">
-            <!-- priority: run early so the lock is up before a child opens another app. -->
+            <!-- Exempt boot broadcasts only. Mixing in non-exempt OEM actions can
+                 cause targetSdk 26+ to ignore the whole filter. -->
             <intent-filter android:priority="999">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+            <!-- OEM / MediaTek IPO. targetSdk 26+ may drop these as implicit broadcasts.
+                 The dynamic receiver and the standby alarm cover that case. -->
+            <intent-filter>
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="android.intent.action.USER_PRESENT" />
-                <action android:name="android.intent.action.USER_UNLOCKED" />
                 <action android:name="android.intent.action.REBOOT" />
-                <!-- MediaTek IPO: Hisense M7332 power button is often suspend, not cold boot. -->
                 <action android:name="android.intent.action.ACTION_BOOT_IPO" />
                 <action android:name="android.intent.action.ACTION_PREBOOT_IPO" />
                 <action android:name="com.mediatek.intent.action.ACTION_BOOT_IPO" />
-                <!-- Fires on every IPO standby, so the 2nd cycle can plant a wake alarm. -->
                 <action android:name="android.intent.action.ACTION_SHUTDOWN_IPO" />
                 <action android:name="android.intent.action.ACTION_SHUTDOWN" />
             </intent-filter>

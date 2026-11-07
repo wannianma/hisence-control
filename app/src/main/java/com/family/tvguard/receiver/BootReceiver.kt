@@ -1,8 +1,10 @@
 package com.family.tvguard.receiver
 
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.util.Log
 import com.family.tvguard.TvGuardApp
 import com.family.tvguard.service.GuardService
@@ -40,7 +42,11 @@ class BootReceiver : BroadcastReceiver() {
             } else {
                 // IPO / user-present must lock even during the cold-boot grace window.
                 // The 2nd standby resume is not a new boot, and grace must not swallow it.
-                GuardService.start(appCtx, showLock = isWakeAction(action))
+                val wake = isWakeAction(action)
+                GuardService.start(appCtx, showLock = wake)
+                // Start the activity from this receiver. Hisense drops the same
+                // startActivity once it is only coming from GuardService.
+                if (wake) KeepAliveScheduler.bringLockToFront(appCtx)
             }
         } catch (e: Exception) {
             Log.e(TvGuardApp.TAG, "BootReceiver failed: ${e.message}", e)
@@ -50,6 +56,28 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        /** Hisense can disable this component in 启动管理. Re-enable while we are running. */
+        fun ensureEnabled(context: Context) {
+            try {
+                val pm = context.packageManager
+                val cn = ComponentName(context, BootReceiver::class.java)
+                val state = pm.getComponentEnabledSetting(cn)
+                if (state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+                    state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER ||
+                    state == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED
+                ) {
+                    pm.setComponentEnabledSetting(
+                        cn,
+                        PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                        PackageManager.DONT_KILL_APP
+                    )
+                    Log.i(TvGuardApp.TAG, "Re-enabled BootReceiver (was $state)")
+                }
+            } catch (e: Exception) {
+                Log.w(TvGuardApp.TAG, "ensure BootReceiver enabled: ${e.message}")
+            }
+        }
+
         val START_ACTIONS = setOf(
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_LOCKED_BOOT_COMPLETED,

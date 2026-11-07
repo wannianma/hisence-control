@@ -1,8 +1,8 @@
-# 家庭电视锁 TvGuard M2.17
+# 家庭电视锁 TvGuard M2.18
 
 `com.family.tvguard` — Hisense VIDAA / Android TV 家长锁屏 + 局域网控制 + 英语答题。
 
-当前：`versionCode 19` / `1.0.0-m2.17`
+当前：`versionCode 20` / `1.0.0-m2.18`
 
 ## 构建
 
@@ -58,19 +58,17 @@ adb shell appops get com.family.tvguard GET_USAGE_STATS
 
 未授权时自动回退 `getRunningTasks` / 前台进程启发式，**不会**因此无法锁屏。
 
-## 开机 / 每次待机唤醒（m2.17）
+## 开机 / 每次待机唤醒（m2.18）
 
-海信 M7332 的电源键是待机（MediaTek IPO），不是冷启动。m2.16 第一次开关能拦截，第二次会失败：elapsed 时钟在 IPO 里可能停住，心跳闹钟不会到期；进程若被冻住，`LockActivity` 仍显示“在前台”，服务就不再拉锁屏。
+海信 M7332 的电源键是待机（MediaTek IPO），不是冷启动，所以只听 `BOOT_COMPLETED` 不够。m2.17 灭屏后会挂墙钟闹钟，但有两处会把下一次拉起弄丢：跟进闹钟用会停走的 `elapsedRealtime` 做去重，闹钟在亮屏前先响时不再预约下一次；持久化 Job 在自己还没结束时去检查 pending，于是跑完就没有下一发。进程被待机杀掉后，动态注册的 `SCREEN_ON` 也不在了。
 
-本版每次灭屏 / IPO 关机都会重新做这几件事（第 1 次、第 2 次、第 N 次相同）：
+m2.18：
 
-- 清掉“锁屏已在前台”的内存标记
-- 挂一个**墙钟 RTC、不唤醒屏幕**的闹钟。待机时墙钟继续走，下次用户打开电视时闹钟已经过期，系统会马上拉起守护。不把关着的电视自己打开
-- 另留一个不精确 RTC 闹钟，避免精确闹钟在第二次唤醒时被系统空闲配额推迟
-- 动态监听 `SCREEN_OFF` / `SCREEN_ON` / 屏保结束；清单里额外收 `ACTION_SHUTDOWN_IPO`
-- 亮屏沿（灭 → 亮）强制拉 `LockActivity`，不受开机 8 秒宽限影响
-- 持久化 JobScheduler 仍在，作为重启后的后备
-- 解锁窗口、彻底解锁、答题、每日配额不变。使用情况访问没开也会启动守护
+- 待机闹钟的去重改用墙钟。正在响的那一次**一定**再挂下一发，不用会停走的 elapsed
+- Job 返回之后再预约下一次；亮屏时由闹钟/开机广播直接拉锁屏，不把 `startActivity` 只留给前台服务（海信会丢掉服务里的后台启动）
+- 精确闹钟不再走 `setExactAndAllowWhileIdle`，避免心跳把系统的 idle 配额占满、把待机闹钟推迟
+- `BOOT_COMPLETED` 单独放一个 intent-filter。运行中若发现开机广播组件被关掉，会重新打开
+- 仍然不用会把电视自己点亮的 wakeup 闹钟。解锁窗口、彻底解锁、答题、每日配额不变
 
 海信/VIDAA 仍可能杀掉未白名单进程。若开机后还是能直接用别的应用：
 
