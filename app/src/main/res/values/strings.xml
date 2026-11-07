@@ -13,6 +13,6 @@
     <string name="btn_unlock_pin">家长 PIN 解锁</string>
     <string name="channel_guard">电视守护</string>
     <string name="notif_guard_running">电视锁守护运行中</string>
-    <string name="hint_autostart">每次待机再开机都会重新拦截：关机前会再挂一次闹钟（第 2 次、第 N 次也一样）。若仍不锁屏，请到海信「设置 → 应用 → 启动管理」允许「家庭电视锁」自启动和后台运行。</string>
+    <string name="hint_autostart">待机再开机会自动锁屏。若没有：先手动打开一次本应用（系统「强行停止」之后必须这样），并在「设置 → 应用 → 启动管理」允许「家庭电视锁」自启动和后台运行。</string>
     <string name="hint_usage_access">未开启「使用情况访问」时守护仍会启动，但前台应用检测可能不准。建议：设置 → 应用 → 特殊应用权限 → 使用情况访问权限 → 家庭电视锁。</string>
 </resources>

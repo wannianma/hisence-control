@@ -30,6 +30,7 @@ class KeepAliveReceiver : BroadcastReceiver() {
                     GuardService.start(appCtx, showLock = false)
                 } else {
                     GuardService.start(appCtx, showLock = true)
+                    KeepAliveScheduler.bringLockToFront(appCtx)
                 }
             } catch (e: Exception) {
                 Log.e(TvGuardApp.TAG, "KeepAliveReceiver failed: ${e.message}", e)

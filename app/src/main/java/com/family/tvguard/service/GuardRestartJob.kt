@@ -2,8 +2,13 @@ package com.family.tvguard.service
 
 import android.app.job.JobParameters
 import android.app.job.JobService
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.util.Log
 import com.family.tvguard.TvGuardApp
+import com.family.tvguard.ui.LockActivity
 
 /**
  * Persisted JobScheduler entry. The system restores this after reboot / IPO wake
@@ -12,10 +17,26 @@ import com.family.tvguard.TvGuardApp
 class GuardRestartJob : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
         Log.i(TvGuardApp.TAG, "GuardRestartJob start id=${params.jobId}")
-        // Presence only. The service tick raises the lock; forcing it here would
-        // re-launch LockActivity every time the one-shot job cycles.
-        // start() re-arms the persisted one-shot once this execution drops out of getPendingJob.
-        GuardService.start(applicationContext, showLock = false)
+        val appCtx = applicationContext
+        val interactive = (appCtx.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
+        if (interactive) {
+            GuardService.start(appCtx, showLock = true)
+            KeepAliveScheduler.bringLockToFront(appCtx)
+        } else {
+            // Do not start LockActivity while the panel is off — turnScreenOn would power the TV.
+            LockActivity.clearResumed()
+            GuardService.start(appCtx, showLock = false)
+        }
+        // JOB_SOON is still pending until this method returns, so schedule() will not
+        // replace it. Arm the next one after it drops out, or a standby wake has nothing left.
+        Handler(Looper.getMainLooper()).post {
+            val on = (appCtx.getSystemService(Context.POWER_SERVICE) as PowerManager).isInteractive
+            if (on) {
+                KeepAliveScheduler.armSoonJob(appCtx)
+            } else {
+                KeepAliveScheduler.armForStandby(appCtx, fromAlarmWhileOff = true)
+            }
+        }
         return false
     }
 

@@ -23,6 +23,7 @@ import com.family.tvguard.R
 import com.family.tvguard.TvGuardApp
 import com.family.tvguard.data.GuardPrefs
 import com.family.tvguard.net.AdminHttpServer
+import com.family.tvguard.receiver.BootReceiver
 import com.family.tvguard.ui.LockActivity
 import com.family.tvguard.ui.MainActivity
 import com.family.tvguard.util.UsageAccessHelper
@@ -470,6 +471,7 @@ class GuardService : Service() {
 
         fun start(context: Context, showLock: Boolean = false) {
             val appCtx = context.applicationContext
+            BootReceiver.ensureEnabled(appCtx)
             val app = appCtx as? TvGuardApp
             if (app != null && !app.ensurePrefs()) {
                 Log.i(TvGuardApp.TAG, "GuardService.start deferred until user unlock showLock=$showLock")
